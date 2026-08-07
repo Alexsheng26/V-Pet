@@ -2,7 +2,12 @@
 
 一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它摔懵，也可以贴到屏幕边上挂着。
 
-![state](https://img.shields.io/badge/status-v0.2%20interactions-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-36-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
+![state](https://img.shields.io/badge/status-v0.3-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-36-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
+
+![八个状态](docs/states.png)
+
+> 上面这张图由 `python tools/preview.py` 生成。棋盘格背景是为了让"哪里是真透明"一眼可见 ——
+> 这类项目最容易翻车的地方就是以为画好了，贴到桌面上才发现边缘带一圈白底。
 
 ---
 
@@ -13,7 +18,18 @@ pip install -r requirements.txt
 python main.py
 ```
 
-没有素材也能跑 —— 默认用 `QPainter` 现画一只占位史莱姆。
+不需要任何素材文件 —— 角色是 `QPainter` 现画的。
+
+## 角色是画的，不是贴的
+
+造型参考了一只网上流传的黄色团子（无颈梨形身体、奶油色肚子、大圆眼、深橄榄色的手），
+但代码里是**照着造型重画**的，没有把参考图打包进仓库。两个原因：
+
+1. 仓库是公开的，塞一张来源不明的图进来，素材版权上说不清楚；
+2. 更实际的是 —— 位图做不到按状态换手势。举手、竖大拇指、单手抓墙、
+   摔懵时手往外张，这些是 `_arm_angles()` 按状态给角度算出来的，一张静态图只能整体形变。
+
+想换成自己的图也行，见下面的 `sprites/` 约定。
 
 ## 能玩什么
 
@@ -47,7 +63,7 @@ python main.py
 
 ### 2. 点击穿透：方窗口装圆宠物
 
-窗口是 108×108 的方块，宠物是圆的。如果四角那些完全透明的像素照样吃鼠标事件，
+窗口是 144×144 的方块，宠物是圆的。如果四角那些完全透明的像素照样吃鼠标事件，
 这只宠物就成了一块挡住桌面图标的隐形玻璃。
 
 Qt 只能整个窗口开关 `WA_TransparentForMouseEvents`，做不到按像素判断，所以要下到 Win32
@@ -71,6 +87,7 @@ main.py            入口
 vpet/state.py      行为：状态机 + 物理。不 import Qt
 vpet/render.py     渲染：状态 -> QImage，含与角色无关的姿态系统
 vpet/window.py     窗口：透明、置顶、拖拽、点击穿透、托盘
+tools/preview.py   生成上面那张状态对照图
 tests/             36 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
@@ -111,7 +128,7 @@ sprites/
    └──(松手，离墙近且离地够高)─→ CLING ──(6~15s 蹬墙)
 ```
 
-## 两个只有测试才抓得到的 bug
+## 三个只有测试才抓得到的 bug
 
 都不是崩溃，是"看起来在跑，其实是错的"那类。
 
@@ -127,6 +144,12 @@ sprites/
 物理像素数该变，逻辑尺寸不该变。
 → `test_logical_size_is_identical_across_dpr`
 
+**开心时爱心被裁掉一角。** happy 的姿态本来就把整只往上抬，爱心再往上飘就顶出画布了。
+麻烦的是**包围盒查不出裁剪** —— 被裁掉的部分不会让包围盒变大，它只会停在 0。
+所以断言不能写"没出界"，得写"离边缘至少还有半个像素"，用余量反推。
+加上这条之后它立刻又抓出 dizzy 甩手 + 旋转叠加时会顶到左边。
+→ `test_nothing_touches_the_canvas_edge`
+
 ## 跑测试
 
 ```bash
@@ -135,7 +158,7 @@ python -m unittest discover
 
 ## 后续
 
-- [ ] 画真素材接到 `sprites/`
+- [ ] 手部细节（现在是圆的，参考造型有指头）
 - [ ] 配置持久化（位置、缩放、跟随开关、是否开机自启）
 - [ ] 多显示器跨屏拖拽的边界处理
 - [ ] 打包成免安装 exe
