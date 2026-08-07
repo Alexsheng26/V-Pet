@@ -6,7 +6,7 @@
    FramelessWindowHint 去边框, WA_TranslucentBackground 开真 alpha 通道。
    加 Qt.Tool 是为了不在任务栏和 Alt+Tab 里占位置。
 
-2. 点击穿透(_sync_click_through)
+2. 点击穿透(_sync_pointer)
    窗口是个方的，但宠物是圆的 —— 四角那些透明像素如果照样吃鼠标事件，
    宠物就成了一块挡住桌面图标的隐形玻璃。
    Qt 只能整个窗口开关 WA_TransparentForMouseEvents，做不到按像素判断，
@@ -15,8 +15,11 @@
    自然也没法靠 enterEvent 判断鼠标什么时候移回来 —— 只能用全局光标位置轮询。
 
 3. 退出路径
-   无边框窗口没有关闭按钮。托盘菜单和 Esc 在写第一行渲染代码之前就得接上，
+   无边框窗口没有关闭按钮。托盘菜单和 Esc 是在写第一行渲染代码之前接上的，
    否则很容易做出一个只能靠任务管理器杀掉的窗口。
+
+摸头(搓)的判定也挂在第 2 条的光标轮询上: 那个循环每帧已经算出"光标在不在
+宠物身上"了，再累加一下光标位移就够了，不用额外装事件过滤器。
 """
 
 from __future__ import annotations
@@ -34,6 +37,8 @@ from .state import PetBrain, State
 FRAME_MS = 16            # ~60fps
 MAX_DT = 0.05            # 卡顿后别让宠物瞬移
 ALPHA_HIT = 24           # alpha 低于这个值就算"不是宠物身体"
+RUB_TRIGGER = 300.0      # 在宠物身上累计搓够这么多像素算摸头
+RUB_DECAY = 0.92         # 每帧衰减: 慢慢划过去不算，得来回搓才攒得起来
 
 _IS_WINDOWS = sys.platform == "win32"
 _GWL_EXSTYLE = -20
@@ -58,7 +63,10 @@ class PetWindow(QWidget):
         self._dragging = False
         self._click_through = False
         self._hwnd = 0
+        self._rub = 0.0
+        self._last_cursor = QCursor.pos()
 
+        self._build_actions()
         self._build_tray()
 
         self._clock = QElapsedTimer()
@@ -71,8 +79,10 @@ class PetWindow(QWidget):
     def _tick(self) -> None:
         dt = min(self._clock.restart() / 1000.0, MAX_DT)
         self._t += dt
+        cursor = QCursor.pos()
 
         self.brain.set_bounds(self._screen_bounds())
+        self.brain.set_pointer(float(cursor.x()), float(cursor.y()))
         self.brain.update(dt)
         self.move(round(self.brain.x), round(self.brain.y))
 
@@ -80,7 +90,7 @@ class PetWindow(QWidget):
             self.brain.state, self._t, self.brain.facing, self.devicePixelRatioF()
         )
         self.update()
-        self._sync_click_through()
+        self._sync_pointer(cursor)
 
     def paintEvent(self, event) -> None:
         if self._frame.isNull():
@@ -88,14 +98,25 @@ class PetWindow(QWidget):
         painter = QPainter(self)
         painter.drawImage(0, 0, self._frame)
 
-    # --- 点击穿透 ---------------------------------------------------------
-    def _sync_click_through(self) -> None:
+    # --- 光标: 点击穿透 + 摸头 --------------------------------------------
+    def _sync_pointer(self, cursor: QPoint) -> None:
+        moved = (cursor - self._last_cursor).manhattanLength()
+        self._last_cursor = cursor
+
         if self._dragging:
             self._set_click_through(False)
             return
-        local = self.mapFromGlobal(QCursor.pos())
+
+        local = self.mapFromGlobal(cursor)
         on_body = self.rect().contains(local) and self._alpha_at(local) >= ALPHA_HIT
         self._set_click_through(not on_body)
+
+        # 光标在身上来回搓就是摸头。衰减系数决定了"必须来回搓"——
+        # 匀速划过去的话，攒的速度赶不上衰减，触发不了。
+        self._rub = self._rub * RUB_DECAY + (moved if on_body else 0.0)
+        if self._rub >= RUB_TRIGGER:
+            self._rub = 0.0
+            self.brain.head_pat()
 
     def _alpha_at(self, pos: QPoint) -> int:
         img = self._frame
@@ -139,8 +160,15 @@ class PetWindow(QWidget):
         self._dragging = False
         self.brain.release()
 
+    def mouseDoubleClickEvent(self, event) -> None:
+        # Qt 的事件顺序是 press → release → doubleclick，所以上面那次
+        # grab/release 已经跑完了，这里直接覆盖成摸头即可。
+        if event.button() == Qt.LeftButton:
+            self.brain.head_pat()
+
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
+        menu.addAction(self._follow_action)
         menu.addAction("打个盹", self.brain.doze_off)
         menu.addAction("藏起来", self.hide)
         menu.addSeparator()
@@ -151,15 +179,28 @@ class PetWindow(QWidget):
         if event.key() == Qt.Key_Escape:
             QApplication.quit()
 
-    # --- 托盘 -------------------------------------------------------------
+    # --- 菜单与托盘 -------------------------------------------------------
+    def _build_actions(self) -> None:
+        # 同一个 QAction 挂在右键菜单和托盘菜单上，勾选状态天然同步
+        self._follow_action = QAction("跟着鼠标", self)
+        self._follow_action.setCheckable(True)
+        self._follow_action.toggled.connect(self._set_follow)
+
+        self._toggle_action = QAction("藏起来", self)
+        self._toggle_action.triggered.connect(self._toggle_visible)
+
+    def _set_follow(self, on: bool) -> None:
+        self.brain.follow = on
+        if on:
+            self.brain.wake()
+
     def _build_tray(self) -> None:
         icon = QIcon(QPixmap.fromImage(self.provider.render(State.IDLE, 0.0, 1, 1.0)))
         self.tray = QSystemTrayIcon(icon, self)
         self.tray.setToolTip("v-pet")
 
         menu = QMenu()
-        self._toggle_action = QAction("藏起来", menu)
-        self._toggle_action.triggered.connect(self._toggle_visible)
+        menu.addAction(self._follow_action)
         menu.addAction(self._toggle_action)
         menu.addSeparator()
         menu.addAction("退出", QApplication.quit)

@@ -1,8 +1,8 @@
 # v-pet
 
-一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它弹回地面。
+一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它摔懵，也可以贴到屏幕边上挂着。
 
-![state](https://img.shields.io/badge/status-v0%20skeleton-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![license](https://img.shields.io/badge/license-MIT-green)
+![state](https://img.shields.io/badge/status-v0.2%20interactions-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-36-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -13,12 +13,23 @@ pip install -r requirements.txt
 python main.py
 ```
 
-- **左键拖动**：抓起来，松手会带着甩出去的速度掉下来，落地弹两下
-- **右键**：打个盹 / 藏起来 / 退出
-- **Esc** 或**托盘菜单**：退出
-- 放着不管 30 秒，它会自己睡着；点一下就醒
-
 没有素材也能跑 —— 默认用 `QPainter` 现画一只占位史莱姆。
+
+## 能玩什么
+
+| 操作 | 反应 |
+|---|---|
+| 左键拖动 | 抓起来。松手带着甩出去的速度掉下来，落地弹两下 |
+| 摔得够狠 | 摔懵，头顶转圈星星 |
+| 拖到屏幕左右边缘松手 | 挂在墙上，晃晃悠悠，过几秒自己蹬墙掉下来 |
+| 双击 / 在它身上来回搓 | 摸头，眯眼冒爱心 |
+| 右键 → 跟着鼠标 | 追着光标跑；追上就停下，不会在原地抖 |
+| 放着不管 30 秒 | 睡着，冒 z；点一下就醒 |
+| 右键 / 托盘 | 打个盹、藏起来、退出 |
+| Esc | 退出 |
+
+"来回搓"和"匀速划过去"是区分得开的：判定值每帧按 `RUB_DECAY` 衰减，
+慢慢划过去攒的速度赶不上衰减，只有真的来回蹭才触发。
 
 ## 这个项目在解决什么问题
 
@@ -28,7 +39,7 @@ python main.py
 ### 1. 逐像素透明，不是抠图
 
 `FramelessWindowHint` 去边框，`WA_TranslucentBackground` 打开真正的 alpha 通道，
-所以角色边缘是抗锯齿的软边、投影是半透明的。
+所以角色边缘是抗锯齿的软边、投影是半透明的、爱心和星星能淡入淡出。
 
 对比一下没选的方案：tkinter 的 `-transparentcolor` 是**色键透明**，只能整块抠掉某一种颜色，
 边缘必然是硬的、会有白边，也做不了半透明投影。像素风角色勉强能用，软边角色直接废。
@@ -45,7 +56,8 @@ Qt 只能整个窗口开关 `WA_TransparentForMouseEvents`，做不到按像素�
 只能用全局光标位置轮询。
 
 判定依据直接复用当前帧的 alpha，所以渲染层返回的是 `QImage` 而不是直接往窗口上画：
-省掉了为命中测试再渲染一遍。
+省掉了为命中测试再渲染一遍。摸头的"搓"判定也挂在同一个轮询上 ——
+那个循环每帧已经算出"光标在不在宠物身上"了，再累加一下光标位移就够了。
 
 ### 3. 退出路径要先于一切
 
@@ -55,27 +67,28 @@ Qt 只能整个窗口开关 `WA_TransparentForMouseEvents`，做不到按像素�
 ## 分层
 
 ```
-main.py           入口
-vpet/state.py     行为：状态机 + 物理。不 import Qt
-vpet/render.py    渲染：状态 -> QImage
-vpet/window.py    窗口：透明、置顶、拖拽、点击穿透、托盘
-tests/            state.py 的单元测试，不需要显示器
+main.py            入口
+vpet/state.py      行为：状态机 + 物理。不 import Qt
+vpet/render.py     渲染：状态 -> QImage，含与角色无关的姿态系统
+vpet/window.py     窗口：透明、置顶、拖拽、点击穿透、托盘
+tests/             36 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
-两条切割线，都是为了让"改一边不用碰另一边"：
+三条切割线，都是为了让"改一边不用碰另一边"：
 
 **行为 ⊥ Qt。** `state.py` 一个像素都不画，只回答"现在什么状态、在哪"。
-代价是坐标要在两边传来传去，回报是行为逻辑能脱离 GUI 直接跑单元测试 ——
-重力、边界反弹、甩出去的速度上限这些手感参数，改完立刻能验证，不用真去拖一遍窗口。
+回报是行为逻辑能脱离 GUI 直接跑单元测试 —— 重力、贴边判定、甩出去的速度上限
+这些手感参数，改完立刻能验证，不用真去拖一遍窗口。
+
+**姿态 ⊥ 角色。** `pose_for()` 只说"这个状态该怎么挤压、拉伸、偏移、旋转"，
+和这只宠物长什么样无关。所以接一张别的图进来当角色时，可以直接套同一套动画。
 
 **渲染 ⊥ 素材。** 窗口只问 provider 要"当前这一帧"，不关心它是从 PNG 读的还是当场画的。
-`State` 枚举的值直接就是目录名，所以：
+`State` 枚举的值直接就是目录名：
 
 ```
 sprites/
-  idle/   00.png 01.png ...
-  walk/   00.png 01.png ...
-  drag/  fall/  sleep/
+  idle/  walk/  drag/  fall/  sleep/  happy/  cling/  dizzy/
 ```
 
 丢进去就自动换皮，一行代码不用改；缺哪个状态就自动退回 `idle`，可以一个状态一个状态地补。
@@ -85,19 +98,34 @@ sprites/
 ## 状态机
 
 ```
-                  ┌──────────────────────────┐
-                  ↓                          │
-   IDLE ⇄ WALK ──(30s 没被打扰)──→ SLEEP ──(点击)
-    │  ↑
-  (按下)│
-    ↓  │(落稳)
-   DRAG ──(松手)──→ FALL ──(反弹到停)──┘
+   ┌─── 追鼠标模式只改 WALK 的方向，不新加状态 ───┐
+   ↓                                              │
+  IDLE ⇄ WALK ──(30s 没被打扰)──→ SLEEP ──(点击)──┘
+   │ ↑ ↑
+   │ │ └────────────── HAPPY ←──(双击/来回搓)
+   │ │                   │
+(按下)│                (2.2s)
+   ↓ │(落稳且冲击小)        │
+  DRAG ──(松手，离墙远)──→ FALL ──(冲击大)──→ DIZZY ──(1.8s)──┘
+   │                        ↑
+   └──(松手，离墙近且离地够高)─→ CLING ──(6~15s 蹬墙)
 ```
 
-`SLEEP` 的计时器只被**用户交互**清零，它自己溜达不算。
-第一版写反了：`_tick_walk` 每帧清零计时器，而 `IDLE` 每几秒就会切一次 `WALK`，
-于是 30 秒的阈值永远攒不满，宠物永远睡不着 —— 单元测试逮到的，
-`tests/test_brain.py::test_wandering_does_not_reset_the_sleep_timer` 是那次的回归测试。
+## 两个只有测试才抓得到的 bug
+
+都不是崩溃，是"看起来在跑，其实是错的"那类。
+
+**宠物永远不会睡觉。** `_tick_walk` 每帧把发呆计时清零，而 `IDLE` 每 1.2–4 秒就切一次 `WALK`，
+于是 30 秒的阈值永远攒不满。根子是语义搞混了：该重置计时的是"用户来打扰了"，
+不是"它自己溜达了一圈"。肉眼盯窗口盯不出来，你得真的等满 30 秒还什么都不发生才会起疑。
+→ `test_wandering_does_not_reset_the_sleep_timer`
+
+**高 DPI 下宠物被裁边。** `render()` 里写了 `p.scale(dpr, dpr)`，但 `QPainter` 作用在设过
+`devicePixelRatio` 的 `QImage` 上时会**自己**应用缩放，等于乘了两次。
+在 100% 缩放的屏幕上（dpr=1）完全看不出来，一到 150% 就开始裁边。
+回归测试的写法是：在 dpr = 1.0 / 1.5 / 2.0 下分别渲染，比较宠物在**逻辑坐标**下的包围盒 ——
+物理像素数该变，逻辑尺寸不该变。
+→ `test_logical_size_is_identical_across_dpr`
 
 ## 跑测试
 
@@ -105,15 +133,10 @@ sprites/
 python -m unittest discover
 ```
 
-## 状态与后续
-
-v0 骨架已经跑通：透明窗口、拖拽甩动、状态机、点击穿透、托盘、高 DPI（150% 缩放实测正常）。
-
-接下来：
+## 后续
 
 - [ ] 画真素材接到 `sprites/`
-- [ ] 贴边挂住、跟随鼠标、双击摸头之类的互动
-- [ ] 配置持久化（位置、缩放、是否开机自启）
+- [ ] 配置持久化（位置、缩放、跟随开关、是否开机自启）
 - [ ] 多显示器跨屏拖拽的边界处理
 - [ ] 打包成免安装 exe
 
