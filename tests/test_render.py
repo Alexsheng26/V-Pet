@@ -11,17 +11,22 @@ import unittest
 # 必须在 import QtGui 之前设好，否则 CI / 无桌面环境会起不来
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QGuiApplication, QImage  # noqa: E402
+from PySide6.QtGui import QImage  # noqa: E402
+
+# 必须是 QApplication 而不是 QGuiApplication: 同一个进程只能有一个 app 实例，
+# 而 test_window_config 里的 QWidget 需要 QApplication。这里若先建了
+# QGuiApplication，那边 instance() 拿到的就是它，创建窗口时直接段错误。
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from vpet.render import PET_SIZE, BlobPet, pose_for  # noqa: E402
 from vpet.state import State  # noqa: E402
 
-_app: QGuiApplication | None = None
+_app: QApplication | None = None
 
 
 def setUpModule() -> None:
     global _app
-    _app = QGuiApplication.instance() or QGuiApplication([])
+    _app = QApplication.instance() or QApplication([])
 
 
 def logical_bbox(img, threshold: int = 8) -> tuple[float, float, float, float] | None:

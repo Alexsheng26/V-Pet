@@ -48,10 +48,20 @@ _WS_EX_TRANSPARENT = 0x00000020
 
 
 class PetWindow(QWidget):
-    def __init__(self, provider, config: Config | None = None) -> None:
+    def __init__(
+        self,
+        provider,
+        config: Config | None = None,
+        config_path=None,
+        autostart_key: str = autostart.RUN_KEY,
+    ) -> None:
         super().__init__()
         self.provider = provider
         self.config = config or Config()
+        self.config_path = config_path      # None = 走 config.py 里的默认位置
+        # 注册表键做成可注入的，测试才能在自建的临时键上跑。
+        # 不然任何碰到自启开关的测试都会往用户**真实的** Run 键里写东西。
+        self.autostart_key = autostart_key
         size = provider.size
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -204,14 +214,13 @@ class PetWindow(QWidget):
         self.brain.x, self.brain.y = float(cfg.x), float(cfg.y)
         self.move(cfg.x, cfg.y)
 
-    def save_config(self, path=None) -> bool:
-        """path 只为测试留的口子，正常调用不传，走默认位置。"""
+    def save_config(self) -> bool:
         self.config.x = int(round(self.brain.x))
         self.config.y = int(round(self.brain.y))
         self.config.follow = self.brain.follow
         if getattr(self.provider, "resizable", False):
             self.config.size = self.provider.size
-        return self.config.save(path)
+        return self.config.save(self.config_path)
 
     # --- 菜单与托盘 -------------------------------------------------------
     def _build_actions(self) -> None:
@@ -227,7 +236,7 @@ class PetWindow(QWidget):
         # 启动项里手动关掉了，那边才是真相。
         self._autostart_action = QAction("开机自启", self)
         self._autostart_action.setCheckable(True)
-        self._autostart_action.setChecked(autostart.is_enabled())
+        self._autostart_action.setChecked(autostart.is_enabled(self.autostart_key))
         self._autostart_action.toggled.connect(self._set_autostart)
 
         self._size_menu = QMenu("大小", self)
@@ -245,9 +254,10 @@ class PetWindow(QWidget):
         self.brain.follow = on
         if on:
             self.brain.wake()
+        self.save_config()
 
     def _set_autostart(self, on: bool) -> None:
-        actual = autostart.set_enabled(on)
+        actual = autostart.set_enabled(on, self.autostart_key)
         self.config.autostart = actual
         if actual != on:
             # 写注册表失败(组策略锁了之类)，把勾选框拨回真实状态，
@@ -255,6 +265,7 @@ class PetWindow(QWidget):
             self._autostart_action.blockSignals(True)
             self._autostart_action.setChecked(actual)
             self._autostart_action.blockSignals(False)
+        self.save_config()
 
     def _set_size(self, n: int) -> None:
         if not getattr(self.provider, "resizable", False):
@@ -270,6 +281,7 @@ class PetWindow(QWidget):
             self.brain.state, self._t, self.brain.facing, self.devicePixelRatioF()
         )
         self.tray.setIcon(QIcon(QPixmap.fromImage(self.provider.render(State.IDLE, 0.0, 1, 1.0))))
+        self.save_config()
 
     def _build_tray(self) -> None:
         icon = QIcon(QPixmap.fromImage(self.provider.render(State.IDLE, 0.0, 1, 1.0)))
