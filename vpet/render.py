@@ -62,7 +62,9 @@ def pose_for(state: State, t: float, facing: int = 1) -> Pose:
         step = math.sin(t * 9.0)
         return Pose(sx=1 + 0.025 * step, sy=1 - 0.025 * step, dy=-abs(step) * 3.0)
     if state is State.DRAG:
-        return Pose(sx=0.90, sy=1.14, dy=-2.0)
+        # 身体本体变高之后，1.14 的纵向拉伸会把头顶顶出画布，
+        # 收到 1.10 —— 拉伸感基本看不出差别，但不会被裁。
+        return Pose(sx=0.92, sy=1.10, dy=-1.0)
     if state is State.FALL:
         return Pose(sx=0.93, sy=1.10)
     if state is State.SLEEP:
@@ -87,16 +89,17 @@ class BlobPet:
 
     size = PET_SIZE
 
-    BODY_TOP = QColor(255, 227, 130)
-    BODY_MID = QColor(251, 206, 76)
-    BODY_LOW = QColor(238, 178, 44)
-    OUTLINE = QColor(186, 128, 24, 70)
-    BELLY = QColor(253, 248, 231)
-    BELLY_EDGE = QColor(250, 232, 180)
-    HAND = QColor(112, 114, 86)
-    IRIS = QColor(170, 214, 190)
-    PUPIL = QColor(24, 26, 24)
-    MOUTH = QColor(146, 104, 46)
+    BODY_LIGHT = QColor(255, 232, 142)
+    BODY_MID = QColor(250, 202, 66)
+    BODY_DEEP = QColor(223, 156, 30)
+    OUTLINE = QColor(176, 116, 18, 55)
+    BELLY = QColor(252, 241, 211)
+    BELLY_EDGE = QColor(250, 226, 174)
+    HAND = QColor(108, 106, 78)
+    HAND_DEEP = QColor(84, 83, 60)
+    IRIS = QColor(116, 200, 142)
+    PUPIL = QColor(20, 22, 20)
+    MOUTH = QColor(150, 106, 44)
     HEART = QColor(255, 118, 148)
     STAR = QColor(255, 214, 102)
 
@@ -120,10 +123,11 @@ class BlobPet:
     def _paint(self, p: QPainter, state: State, t: float, facing: int) -> None:
         pose = pose_for(state, t, facing)
 
-        # 0.66 不是随便定的: 举手 / 甩手 / 旋转叠加起来最宽的是 dizzy 和 fall，
-        # 留这点余量它们才不会顶到画布边被裁(tests 有余量断言盯着)。
-        w = self.size * 0.66 * pose.sx
-        h = self.size * 0.76 * pose.sy
+        # 宽高比约 0.76: 参考造型是"高而坠"的，不是矮墩墩的。
+        # 上限还受举手 / 甩手 / 旋转的叠加约束，太宽 dizzy 会顶到画布边被裁
+        # (tests 有余量断言盯着)。
+        w = self.size * 0.62 * pose.sx
+        h = self.size * 0.82 * pose.sy
         cx = self.size / 2 + pose.dx
         bottom = self.size * 0.95 + pose.dy
 
@@ -136,10 +140,14 @@ class BlobPet:
         p.rotate(pose.rot)
         p.translate(-cx, -bottom)
 
-        grad = QLinearGradient(0, bottom - h, 0, bottom)
-        grad.setColorAt(0.0, self.BODY_TOP)
-        grad.setColorAt(0.55, self.BODY_MID)
-        grad.setColorAt(1.0, self.BODY_LOW)
+        # 用径向渐变而不是竖直线性渐变: 参考造型是 3D 渲染的软光，
+        # 亮部集中在左上方一小块、四周向暗处滚落，这样才有体积感。
+        # 线性渐变只能做出"上浅下深"的贴纸感。
+        light = QPointF(cx - w * 0.16, bottom - h * 0.74)
+        grad = QRadialGradient(light, h * 1.02)
+        grad.setColorAt(0.0, self.BODY_LIGHT)
+        grad.setColorAt(0.42, self.BODY_MID)
+        grad.setColorAt(1.0, self.BODY_DEEP)
         p.setBrush(QBrush(grad))
         p.setPen(QPen(self.OUTLINE, 1.2))
         p.drawPath(self._body_path(cx, bottom, w, h))
@@ -149,13 +157,15 @@ class BlobPet:
         self._paint_face(p, state, t, facing, cx, bottom, w, h)
         p.restore()
 
-        # 特效画在旋转之外，让它们始终朝上飘
+        # 特效画在旋转之外，让它们始终朝上飘。
+        # 爱心和星星的高度锚在**画布**上而不是身体顶上: 身体顶会随 pose 的
+        # 拉伸和抬升上下跑，锚在它上面的话，每次调整比例都要重新算一遍会不会飘出界。
         if state is State.SLEEP:
             self._paint_zzz(p, cx + w * 0.34, bottom - h * 0.98, t)
         elif state is State.HAPPY:
-            self._paint_hearts(p, cx, bottom - h, t)
+            self._paint_hearts(p, cx, t)
         elif state is State.DIZZY:
-            self._paint_stars(p, cx, bottom - h * 1.02, t)
+            self._paint_stars(p, cx, t)
 
     def _body_path(self, cx: float, bottom: float, w: float, h: float) -> QPainterPath:
         """梨形: 圆头 → 溜肩 → 下盘宽。没有脖子，一条曲线从头顶走到底。
@@ -166,48 +176,53 @@ class BlobPet:
         top = bottom - h
         hw = w / 2
         path = QPainterPath()
-        path.moveTo(cx - hw * 0.86, bottom)
-        # 左下 → 最宽处(约七成八高度)
-        path.cubicTo(cx - hw * 1.02, bottom - h * 0.04,
-                     cx - hw * 1.03, top + h * 0.88,
-                     cx - hw * 1.00, top + h * 0.78)
-        # 最宽处 → 脸颊。第二个控制点收到 0.55 制造一个很轻的"腰"，
+        path.moveTo(cx - hw * 0.90, bottom)
+        # 左下 → 最宽处。压到八成高度、几乎贴着底，重心才坠得下去；
+        # 参考造型是个葫芦，不是一个上下差不多粗的柱子。
+        path.cubicTo(cx - hw * 1.04, bottom - h * 0.03,
+                     cx - hw * 1.05, top + h * 0.89,
+                     cx - hw * 1.00, top + h * 0.80)
+        # 最宽处 → 脸颊。第二个控制点收到 0.52 制造一个很轻的"腰"，
         # 少了它整只会退化成一个圆锥，看不出头和身体的区别。
-        path.cubicTo(cx - hw * 0.95, top + h * 0.55,
-                     cx - hw * 0.55, top + h * 0.42,
-                     cx - hw * 0.55, top + h * 0.20)
+        path.cubicTo(cx - hw * 0.96, top + h * 0.50,
+                     cx - hw * 0.58, top + h * 0.42,
+                     cx - hw * 0.62, top + h * 0.18)
         # 脸颊 → 头顶。末控制点压在 top 上，切线水平，头才是圆的
-        path.cubicTo(cx - hw * 0.55, top + h * 0.06,
-                     cx - hw * 0.34, top,
+        path.cubicTo(cx - hw * 0.62, top + h * 0.05,
+                     cx - hw * 0.38, top,
                      cx, top)
         # 右半边镜像
-        path.cubicTo(cx + hw * 0.34, top,
-                     cx + hw * 0.55, top + h * 0.06,
-                     cx + hw * 0.55, top + h * 0.20)
-        path.cubicTo(cx + hw * 0.55, top + h * 0.42,
-                     cx + hw * 0.95, top + h * 0.55,
-                     cx + hw * 1.00, top + h * 0.78)
-        path.cubicTo(cx + hw * 1.03, top + h * 0.88,
-                     cx + hw * 1.02, bottom - h * 0.04,
-                     cx + hw * 0.86, bottom)
+        path.cubicTo(cx + hw * 0.38, top,
+                     cx + hw * 0.62, top + h * 0.05,
+                     cx + hw * 0.62, top + h * 0.18)
+        path.cubicTo(cx + hw * 0.58, top + h * 0.42,
+                     cx + hw * 0.96, top + h * 0.50,
+                     cx + hw * 1.00, top + h * 0.80)
+        path.cubicTo(cx + hw * 1.05, top + h * 0.89,
+                     cx + hw * 1.04, bottom - h * 0.03,
+                     cx + hw * 0.90, bottom)
         # 底部微鼓，坐着的感觉
-        path.cubicTo(cx + hw * 0.46, bottom + h * 0.035,
-                     cx - hw * 0.46, bottom + h * 0.035,
-                     cx - hw * 0.86, bottom)
+        path.cubicTo(cx + hw * 0.48, bottom + h * 0.03,
+                     cx - hw * 0.48, bottom + h * 0.03,
+                     cx - hw * 0.90, bottom)
         path.closeSubpath()
         return path
 
     def _paint_belly(self, p: QPainter, cx: float, bottom: float, w: float, h: float) -> None:
         """肚子用径向渐变淡出，不描边 —— 参考造型里它是和身体融在一起的。"""
-        # 宽扁一点、别全不透明: 满不透明的正圆会读成"贴了个白球"，
-        # 参考造型里肚子是和身体融在一起的一片浅色。
-        cy = bottom - h * 0.21
-        rx, ry = w * 0.35, h * 0.23
+        # 参考造型里肚子几乎占满下半身，是奶油色而不是白色，而且**没有边界** ——
+        # 从中心一路淡到透明，靠渐变和身体融在一起。画成不透明的正圆就成了"贴白球"。
+        # 关键是**过渡要长**: 参考造型里肚子和身体之间没有边界，是一路淡过去的。
+        # 中心不能压满不透明 —— 满不透明 + 短过渡 = 一颗贴在肚子上的发光蛋。
+        cy = bottom - h * 0.24
+        rx, ry = w * 0.42, h * 0.30
+        c, e = self.BELLY, self.BELLY_EDGE
         grad = QRadialGradient(QPointF(cx, cy), max(rx, ry))
-        grad.setColorAt(0.0, QColor(253, 249, 236, 238))
-        grad.setColorAt(0.50, QColor(253, 247, 229, 228))
-        grad.setColorAt(0.84, QColor(251, 236, 197, 120))
-        grad.setColorAt(1.0, QColor(250, 232, 180, 0))
+        grad.setColorAt(0.00, QColor(c.red(), c.green(), c.blue(), 198))
+        grad.setColorAt(0.32, QColor(c.red(), c.green(), c.blue(), 184))
+        grad.setColorAt(0.66, QColor(e.red(), e.green(), e.blue(), 112))
+        grad.setColorAt(0.88, QColor(e.red(), e.green(), e.blue(), 38))
+        grad.setColorAt(1.00, QColor(e.red(), e.green(), e.blue(), 0))
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(grad))
         p.drawEllipse(QPointF(cx, cy), rx, ry)
@@ -269,31 +284,55 @@ class BlobPet:
         )
         p.setPen(QPen(self.BODY_MID, thickness, Qt.SolidLine, Qt.RoundCap))
         p.drawLine(shoulder, end)
-
         p.setPen(Qt.NoPen)
-        p.setBrush(self.HAND)
-        p.drawEllipse(end, hand_r, hand_r * 0.94)
+
         if thumb:
-            # 竖起的大拇指: 一个从拳头上方探出来的圆角小块
+            # 握拳 + 竖起的大拇指。拇指画在**屏幕坐标**里始终朝上:
+            # 手举到 150° 时如果跟着手臂一起转，拇指会指向斜下方。
+            p.setBrush(self.HAND)
+            p.drawEllipse(end, hand_r, hand_r * 0.94)
             p.drawRoundedRect(
                 QRectF(end.x() - hand_r * 0.26, end.y() - hand_r * 1.95,
                        hand_r * 0.52, hand_r * 1.25),
                 hand_r * 0.26, hand_r * 0.26,
             )
+            return
+
+        # 手指跟着手臂转，方向才对: 手垂下时朝下，举起来时朝外。
+        # 旋转量 -side*angle 是把手掌局部的 +y 轴对齐到手臂指向。
+        p.save()
+        p.translate(end)
+        p.rotate(-side * angle)
+        # 手指和手掌同色、只靠两道指缝分开。用更深的颜色画实心手指的话，
+        # 在这个尺寸下会读成三只爪子而不是一只手。
+        p.setBrush(self.HAND)
+        p.drawEllipse(QPointF(0, -hand_r * 0.18), hand_r * 0.94, hand_r * 0.80)
+        for k in (-1.0, 0.0, 1.0):
+            p.drawRoundedRect(
+                QRectF(k * hand_r * 0.50 - hand_r * 0.21, hand_r * 0.02,
+                       hand_r * 0.42, hand_r * 0.72),
+                hand_r * 0.21, hand_r * 0.21,
+            )
+        p.setPen(QPen(self.HAND_DEEP, hand_r * 0.09, Qt.SolidLine, Qt.RoundCap))
+        for k in (-0.5, 0.5):
+            p.drawLine(QPointF(k * hand_r * 1.00, hand_r * 0.14),
+                       QPointF(k * hand_r * 1.00, hand_r * 0.62))
+        p.setPen(Qt.NoPen)
+        p.restore()
 
     # --- 表情 -------------------------------------------------------------
     def _paint_face(
         self, p: QPainter, state: State, t: float, facing: int,
         cx: float, bottom: float, w: float, h: float,
     ) -> None:
-        eye_y = bottom - h * 0.79
-        gap = w * 0.155
-        shift = facing * w * 0.028          # 眼睛朝行进方向偏一点
+        eye_y = bottom - h * 0.80
+        gap = w * 0.145
+        shift = facing * w * 0.026          # 眼睛朝行进方向偏一点
         if state is State.CLING:
             shift = -shift                  # 挂墙上时往屏幕内侧瞟
         left = QPointF(cx - gap + shift, eye_y)
         right = QPointF(cx + gap + shift, eye_y)
-        r = w * 0.082
+        r = w * 0.078
 
         blinking = (t % 3.4) < 0.11
         if state is State.SLEEP or (blinking and state not in (State.HAPPY, State.DIZZY)):
@@ -306,7 +345,7 @@ class BlobPet:
             wide = 1.25 if state in (State.DRAG, State.FALL) else 1.0
             self._open_eyes(p, left, right, r, wide)
 
-        self._paint_mouth(p, state, cx + shift, eye_y + r * 2.5, w)
+        self._paint_mouth(p, state, cx + shift, eye_y + r * 2.4, w)
 
     def _open_eyes(self, p: QPainter, left: QPointF, right: QPointF, r: float, wide: float) -> None:
         for c in (left, right):
@@ -342,14 +381,16 @@ class BlobPet:
             p.drawLine(QPointF(c.x() - r * 0.7, c.y() + r * 0.7), QPointF(c.x() + r * 0.7, c.y() - r * 0.7))
 
     def _paint_mouth(self, p: QPainter, state: State, cx: float, y: float, w: float) -> None:
-        half = w * 0.075
-        depth = w * 0.05
+        # 参考造型的嘴是一条**很宽很浅**的弧，几乎横贯脸部。
+        # 画窄了会变成噘嘴，是这只角色最容易画丢的特征之一。
+        half = w * 0.115
+        depth = w * 0.045
         if state is State.HAPPY:
-            half, depth = w * 0.095, w * 0.085
+            half, depth = w * 0.135, w * 0.080
         elif state is State.SLEEP:
-            half, depth = w * 0.045, w * 0.022
+            half, depth = w * 0.070, w * 0.022
         elif state is State.DIZZY:
-            depth = -depth * 0.6            # 往下撇
+            depth = -depth * 0.7            # 往下撇
         p.setPen(QPen(self.MOUTH, max(1.2, w * 0.017), Qt.SolidLine, Qt.RoundCap))
         p.setBrush(Qt.NoBrush)
         path = QPainterPath()
@@ -372,9 +413,8 @@ class BlobPet:
             p.setPen(QColor(120, 132, 148, alpha))
             p.drawText(QPointF(x + phase * 9, y - phase * 20), "z")
 
-    def _paint_hearts(self, p: QPainter, cx: float, top: float, t: float) -> None:
-        # 起点压在头顶**之下**、升幅也收着: happy 的 pose 本来就把整只往上抬,
-        # 再让爱心往上飘 18px 就会飘出画布被裁掉(tests 里有余量断言盯着)。
+    def _paint_hearts(self, p: QPainter, cx: float, t: float) -> None:
+        ceiling = self.size * 0.055        # 画布留白，爱心飘到这儿为止
         p.setPen(Qt.NoPen)
         for i in range(3):
             phase = (t * 0.9 + i / 3.0) % 1.0
@@ -385,17 +425,20 @@ class BlobPet:
             colour = QColor(self.HEART)
             colour.setAlpha(alpha)
             p.setBrush(colour)
-            p.drawPath(
-                _heart_path(cx + drift + (i - 1) * 15, top + 5 - phase * 12, 3.5 + phase * 2.5)
-            )
+            p.drawPath(_heart_path(
+                cx + drift + (i - 1) * 15,
+                ceiling + (1.0 - phase) * self.size * 0.11,
+                3.2 + phase * 2.2,
+            ))
 
-    def _paint_stars(self, p: QPainter, cx: float, top: float, t: float) -> None:
+    def _paint_stars(self, p: QPainter, cx: float, t: float) -> None:
         """三颗星星绕着头顶转圈 —— 椭圆轨道，看起来才有透视。"""
+        cy = self.size * 0.13
         p.setPen(Qt.NoPen)
         p.setBrush(self.STAR)
         for i in range(3):
             a = t * 5.0 + i * (2 * math.pi / 3)
-            p.drawPath(_sparkle_path(cx + math.cos(a) * 19, top - 5 + math.sin(a) * 5, 4.5))
+            p.drawPath(_sparkle_path(cx + math.cos(a) * 19, cy + math.sin(a) * 5, 4.5))
 
 
 def _heart_path(cx: float, cy: float, s: float) -> QPainterPath:
