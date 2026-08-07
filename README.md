@@ -2,9 +2,9 @@
 
 一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它摔懵，也可以贴到屏幕边上挂着。
 
-![state](https://img.shields.io/badge/status-v0.4-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-73-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
+![state](https://img.shields.io/badge/status-v0.4-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-80-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
 
-![八个状态](docs/states.png)
+![状态与姿势对照](docs/states.png)
 
 > 上面这张图由 `python tools/preview.py` 生成。棋盘格背景是为了让"哪里是真透明"一眼可见 ——
 > 这类项目最容易翻车的地方就是以为画好了，贴到桌面上才发现边缘带一圈白底。
@@ -52,6 +52,7 @@ python main.py
 | 拖到屏幕左右边缘松手 | 挂在墙上，晃晃悠悠，过几秒自己蹬墙掉下来 |
 | 双击 / 在它身上来回搓 | 摸头，眯眼冒爱心 |
 | 右键 → 跟着鼠标 | 追着光标跑；追上就停下，不会在原地抖 |
+| 什么都不干 | 每次停下来有 45% 的概率抱起手，抱着手会站得更久 |
 | 放着不管 30 秒 | 睡着，冒 z；点一下就醒 |
 | 右键 / 托盘 → 大小 | 96 / 120 / 144 / 176 / 208 px，即时生效 |
 | 右键 / 托盘 → 开机自启 | 默认关。勾上才会写 HKCU 的 Run 键 |
@@ -66,7 +67,7 @@ python main.py
 ## 这个项目在解决什么问题
 
 桌面宠物真正难的部分不是"宠物"，是"窗口"。宠物逻辑是一个几百行的状态机，
-而下面这三件事每一件都能卡住一整个晚上：
+而下面这几件事每一件都能卡住一整个晚上：
 
 ### 1. 逐像素透明，不是抠图
 
@@ -127,7 +128,7 @@ vpet/window.py     窗口：透明、置顶、拖拽、点击穿透、托盘、�
 vpet/config.py     配置读写。不 import Qt
 vpet/autostart.py  开机自启（HKCU 的 Run 键）
 tools/preview.py   生成上面那张状态对照图
-tests/             73 个测试，用 offscreen 平台跑，不需要显示器
+tests/             80 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
@@ -150,6 +151,18 @@ sprites/
 丢进去就自动换皮，一行代码不用改；缺哪个状态就自动退回 `idle`，可以一个状态一个状态地补。
 第一版**一帧图都不用画**是有意的 —— 素材才是这类项目真正的瓶颈，
 不该让它挡住"系统能不能跑通"的验证。
+
+## 抱手为什么不是一个状态
+
+`Posture`（垂手 / 抱手）是 `State` 之外的一个维度，和 `follow` 一类。
+
+把它做成 `State.CROSSED` 会有两个问题：`State` 的值直接就是 `sprites/` 的目录名，
+于是凭空多出一个没人会去画的 `sprites/crossed/`；而且它和"在做什么"是正交的 ——
+理论上走路也能抱着手，塞进状态机就得为每种组合各开一个状态。
+
+行为层只决定"现在抱不抱"，渲染层决定"抱手长什么样"。`_arm_angles()` 那套角度模型
+表达不了抱手 —— 它只能让手绕着自己那侧的肩转，而抱手要求前臂横过身体、手落在**对侧**，
+所以抱手是单独一条画法。
 
 ## 状态机
 
@@ -198,7 +211,7 @@ python -m unittest discover
 ## 后续
 
 - [x] 配置持久化（位置、大小、跟随开关、开机自启）
-- [ ] 抱手/叉腰之类的待机姿势变化
+- [x] 抱手待机姿势
 - [ ] 多显示器跨屏拖拽的边界处理
 - [ ] 打包成免安装 exe
 

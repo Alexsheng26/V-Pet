@@ -36,7 +36,7 @@ from PySide6.QtGui import (
     QRadialGradient,
 )
 
-from .state import State
+from .state import Posture, State
 
 PET_SIZE = 144          # 逻辑像素，窗口就是这么大的正方形
 SPRITE_FPS = 8          # 外部素材的播放帧率
@@ -104,7 +104,13 @@ class BlobPet:
     HEART = QColor(255, 118, 148)
     STAR = QColor(255, 214, 102)
 
-    def render(self, state: State, t: float, facing: int, dpr: float = 1.0) -> QImage:
+    def render(
+        self, state: State, t: float, facing: int, dpr: float = 1.0,
+        posture: Posture = Posture.RELAXED,
+    ) -> QImage:
+        # posture 做成带默认值的关键字参数，老的四参数调用不用改。
+        # 如果之后还要往这条接口上挂第三个"状态之外的维度"，
+        # 就该把它们收进一个 dataclass 了，别继续加位置参数。
         img = QImage(int(self.size * dpr), int(self.size * dpr), QImage.Format_ARGB32_Premultiplied)
         img.setDevicePixelRatio(dpr)
         img.fill(Qt.transparent)
@@ -115,13 +121,13 @@ class BlobPet:
         p = QPainter(img)
         p.setRenderHint(QPainter.Antialiasing)
         try:
-            self._paint(p, state, t, facing)
+            self._paint(p, state, t, facing, posture)
         finally:
             p.end()
         return img
 
     # --- 具体画法 ---------------------------------------------------------
-    def _paint(self, p: QPainter, state: State, t: float, facing: int) -> None:
+    def _paint(self, p: QPainter, state: State, t: float, facing: int, posture: Posture) -> None:
         pose = pose_for(state, t, facing)
 
         # 宽高比约 0.76: 参考造型是"高而坠"的，不是矮墩墩的。
@@ -154,7 +160,7 @@ class BlobPet:
         p.drawPath(self._body_path(cx, bottom, w, h))
 
         self._paint_belly(p, cx, bottom, w, h)
-        self._paint_arms(p, state, t, facing, cx, bottom, w, h)
+        self._paint_arms(p, state, t, facing, cx, bottom, w, h, posture)
         self._paint_face(p, state, t, facing, cx, bottom, w, h)
         p.restore()
 
@@ -260,19 +266,53 @@ class BlobPet:
     def _paint_arms(
         self, p: QPainter, state: State, t: float, facing: int,
         cx: float, bottom: float, w: float, h: float,
+        posture: Posture = Posture.RELAXED,
     ) -> None:
-        left, right = self._arm_angles(state, t, facing)
         # 肩点埋在身体里，手要能探到轮廓外面 —— 不然只剩两个深色小疙瘩贴在边上。
         # 但手臂别太长: 垂到底会读成脚，参考造型里手是在身体中段的。
         shoulder_y = bottom - h * 0.46
         shoulder_x = w * 0.36
-        length = h * 0.22
         thickness = w * 0.19
         hand_r = w * 0.115
-        thumb = state is State.HAPPY
 
+        if posture is Posture.CROSSED:
+            self._draw_crossed_arms(p, cx, shoulder_y, shoulder_x, w, h, thickness, hand_r)
+            return
+
+        left, right = self._arm_angles(state, t, facing)
+        length = h * 0.22
+        thumb = state is State.HAPPY
         self._draw_arm(p, QPointF(cx - shoulder_x, shoulder_y), -1, left, length, thickness, hand_r, thumb)
         self._draw_arm(p, QPointF(cx + shoulder_x, shoulder_y), 1, right, length, thickness, hand_r, thumb)
+
+    def _draw_crossed_arms(
+        self, p: QPainter, cx: float, shoulder_y: float, shoulder_x: float,
+        w: float, h: float, thickness: float, hand_r: float,
+    ) -> None:
+        """抱手。
+
+        这个姿势没法用 _arm_angles 那套表达 —— 两条前臂要横过肚子、手落在**对侧**，
+        而角度模型只能让手绕着自己那侧的肩转。所以单独一条画法。
+
+        两条手臂必须分先后画，而且**手要伸到对侧的身体边缘**而不是停在正中。
+        两只手都落在中间的话会撞成一个蝴蝶结 —— 参考造型里也只清楚露出一只手，
+        另一只压在下面。后画的那条自然盖住前一条，前后关系就出来了。
+        """
+        # 两条前臂要有明显的下垂角度且高度错开，否则会叠成一根横杠，
+        # 两端各挂一只手，像鱼鳍。手落在对侧小臂上(而不是身体外缘)才像"抱着"。
+        back = (QPointF(cx + shoulder_x, shoulder_y),
+                QPointF(cx - w * 0.22, shoulder_y + h * 0.14))
+        front = (QPointF(cx - shoulder_x, shoulder_y),
+                 QPointF(cx + w * 0.24, shoulder_y + h * 0.21))
+
+        for shoulder, hand in (back, front):
+            p.setPen(QPen(self.BODY_MID, thickness, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(shoulder, hand)
+            p.setPen(Qt.NoPen)
+            # 手指方向不完全跟着小臂: 完全对齐的话两只手会朝左右张开像鸟爪。
+            # 把旋转量往竖直方向收一半，指头自然下垂，才像搭在对侧小臂上。
+            along = _hand_rotation(hand.x() - shoulder.x(), hand.y() - shoulder.y())
+            self._draw_hand(p, hand, hand_r * 0.92, along * 0.5)
 
     def _draw_arm(
         self, p: QPainter, shoulder: QPointF, side: int, angle: float,
@@ -299,11 +339,14 @@ class BlobPet:
             )
             return
 
-        # 手指跟着手臂转，方向才对: 手垂下时朝下，举起来时朝外。
-        # 旋转量 -side*angle 是把手掌局部的 +y 轴对齐到手臂指向。
+        # 手指跟着手臂转，方向才对: 手垂下时朝下，举起来时朝外
+        self._draw_hand(p, end, hand_r, -side * angle)
+
+    def _draw_hand(self, p: QPainter, at: QPointF, hand_r: float, rotation: float) -> None:
+        """手掌 + 三根手指。rotation 是把手掌局部的 +y 轴对齐到手臂指向的角度。"""
         p.save()
-        p.translate(end)
-        p.rotate(-side * angle)
+        p.translate(at)
+        p.rotate(rotation)
         # 手指和手掌同色、只靠两道指缝分开。用更深的颜色画实心手指的话，
         # 在这个尺寸下会读成三只爪子而不是一只手。
         p.setBrush(self.HAND)
@@ -442,6 +485,14 @@ class BlobPet:
             p.drawPath(_sparkle_path(cx + math.cos(a) * 19, cy + math.sin(a) * 5, 4.5))
 
 
+def _hand_rotation(dx: float, dy: float) -> float:
+    """把手掌局部的 +y 轴转到 (dx, dy) 方向所需的角度(度，Qt 顺时针为正)。
+
+    (0,1) 顺时针转 θ 得到 (-sinθ, cosθ)，令它等于方向向量即得 atan2(-dx, dy)。
+    """
+    return math.degrees(math.atan2(-dx, dy))
+
+
 def _heart_path(cx: float, cy: float, s: float) -> QPainterPath:
     path = QPainterPath()
     path.moveTo(cx, cy + s * 0.75)
@@ -489,7 +540,13 @@ class FolderSprites:
     def has_frames(self) -> bool:
         return bool(self.frames)
 
-    def render(self, state: State, t: float, facing: int, dpr: float = 1.0) -> QImage:
+    def render(
+        self, state: State, t: float, facing: int, dpr: float = 1.0,
+        posture: Posture = Posture.RELAXED,
+    ) -> QImage:
+        # posture 收下但不用: 位图素材没有"抱手"这一帧，硬凑只会更怪。
+        # 想要的话按 sprites/idle/ 的约定自己画一套就行。
+        del posture
         # 缺哪个状态就退回 idle，素材可以一个状态一个状态地补
         seq = self.frames.get(state.value) or self.frames.get(State.IDLE.value)
         if not seq:

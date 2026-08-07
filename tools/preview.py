@@ -19,27 +19,31 @@ from PySide6.QtCore import QRectF, Qt                      # noqa: E402
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage, QPainter  # noqa: E402
 
 from vpet.render import BlobPet                             # noqa: E402
-from vpet.state import State                                # noqa: E402
+from vpet.state import Posture, State                       # noqa: E402
 
-LABEL = {
-    State.IDLE: "idle  发呆 / 呼吸",
-    State.WALK: "walk  溜达 / 追鼠标",
-    State.DRAG: "drag  被拎起来",
-    State.FALL: "fall  下落",
-    State.SLEEP: "sleep  30 秒没人理",
-    State.HAPPY: "happy  摸头 / 双击",
-    State.CLING: "cling  贴边挂住",
-    State.DIZZY: "dizzy  摔懵了",
-}
+R, C = Posture.RELAXED, Posture.CROSSED
+
+# (标注, 状态, 姿势)。抱手不是一个 State，是待机时的姿势变化，所以单独列一格。
+CELLS = [
+    ("idle  发呆 / 呼吸", State.IDLE, R),
+    ("idle  抱手待机", State.IDLE, C),
+    ("walk  溜达 / 追鼠标", State.WALK, R),
+    ("drag  被拎起来", State.DRAG, R),
+    ("fall  下落", State.FALL, R),
+    ("sleep  30 秒没人理", State.SLEEP, R),
+    ("happy  摸头 / 双击", State.HAPPY, R),
+    ("cling  贴边挂住", State.CLING, R),
+    ("dizzy  摔懵了", State.DIZZY, R),
+]
 FRAMES = (0.35, 0.90, 1.45)     # 取三个时间点，看得出在动
-COLS = 4
+COLS = 3
 DPR = 2
 
 
 def build(pet: BlobPet) -> QImage:
     s = pet.size
     cell_w, cell_h = s * len(FRAMES), s + 28
-    rows = (len(State) + COLS - 1) // COLS
+    rows = (len(CELLS) + COLS - 1) // COLS
     w, h = COLS * cell_w, rows * cell_h
 
     sheet = QImage(w * DPR, h * DPR, QImage.Format_ARGB32_Premultiplied)
@@ -59,16 +63,16 @@ def build(pet: BlobPet) -> QImage:
     font = QFont("Microsoft YaHei UI", 9)
     p.setFont(font)
 
-    for i, state in enumerate(State):
+    for i, (label, state, posture) in enumerate(CELLS):
         cx, cy = (i % COLS) * cell_w, (i // COLS) * cell_h
         p.setPen(QColor(120, 130, 142))
         p.setBrush(Qt.NoBrush)
         p.drawRect(QRectF(cx + 1, cy + 1, cell_w - 2, cell_h - 2))
         for j, t in enumerate(FRAMES):
-            p.drawImage(cx + j * s, cy + 22, pet.render(state, t, 1, DPR))
+            p.drawImage(cx + j * s, cy + 22, pet.render(state, t, 1, DPR, posture))
         p.setPen(QColor(226, 232, 240))
         p.drawText(QRectF(cx + 8, cy + 3, cell_w - 16, 19),
-                   Qt.AlignLeft | Qt.AlignVCenter, LABEL[state])
+                   Qt.AlignLeft | Qt.AlignVCenter, label)
     p.end()
     return sheet
 

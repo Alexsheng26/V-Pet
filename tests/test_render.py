@@ -19,7 +19,7 @@ from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from vpet.render import PET_SIZE, BlobPet, pose_for  # noqa: E402
-from vpet.state import State  # noqa: E402
+from vpet.state import Posture, State  # noqa: E402
 
 _app: QApplication | None = None
 
@@ -97,13 +97,14 @@ class TestDevicePixelRatio(unittest.TestCase):
         """
         pet = BlobPet()
         margin = 0.5
+        combos = [(s, Posture.RELAXED) for s in State] + [(State.IDLE, Posture.CROSSED)]
         for dpr in (1.0, 1.5, 2.0):
-            for state in State:
+            for state, posture in combos:
                 for t in (0.2, 0.55, 0.95, 1.4, 1.85):
-                    box = logical_bbox(pet.render(state, t, 1, dpr))
+                    box = logical_bbox(pet.render(state, t, 1, dpr, posture))
                     self.assertIsNotNone(box)
                     left, top, right, bottom = box
-                    where = f"{state.value} @t={t} dpr={dpr}"
+                    where = f"{state.value}/{posture.value} @t={t} dpr={dpr}"
                     self.assertGreaterEqual(left, margin, f"{where} 左边贴边")
                     self.assertGreaterEqual(top, margin, f"{where} 上边贴边")
                     self.assertLessEqual(right, PET_SIZE - margin, f"{where} 右边贴边")
@@ -122,6 +123,19 @@ class TestStates(unittest.TestCase):
     def test_only_cling_and_dizzy_tilt(self):
         upright = {s for s in State if pose_for(s, 0.9, 1).rot == 0.0}
         self.assertEqual(upright, set(State) - {State.CLING, State.DIZZY})
+
+    def test_crossed_posture_actually_looks_different(self):
+        pet = BlobPet()
+        relaxed = pet.render(State.IDLE, 0.5, 1, 1.0, Posture.RELAXED)
+        crossed = pet.render(State.IDLE, 0.5, 1, 1.0, Posture.CROSSED)
+        self.assertNotEqual(relaxed, crossed)
+
+    def test_posture_defaults_to_relaxed(self):
+        pet = BlobPet()
+        self.assertEqual(
+            pet.render(State.IDLE, 0.5, 1, 1.0),
+            pet.render(State.IDLE, 0.5, 1, 1.0, Posture.RELAXED),
+        )
 
     def test_cling_leans_toward_the_wall_it_hangs_on(self):
         # facing=1 表示挂在左墙上、脸朝屏幕内侧，身体该往左蹭

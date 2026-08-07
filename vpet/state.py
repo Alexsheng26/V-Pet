@@ -14,6 +14,18 @@ import random
 from enum import Enum
 
 
+class Posture(str, Enum):
+    """待机时手怎么放。
+
+    刻意**不做成 State**: 它和"在做什么"是正交的，塞进 State 会多出一个
+    没人会去画的 sprites/crossed/ 目录，把素材约定搞脏。
+    和 follow 一样，是状态之外的一个维度。
+    """
+
+    RELAXED = "relaxed"     # 手垂着
+    CROSSED = "crossed"     # 抱手
+
+
 class State(str, Enum):
     """状态值直接就是 sprites/ 下的目录名，渲染层靠它找素材。"""
 
@@ -44,6 +56,11 @@ CLING_MIN_HEIGHT = 30.0 # 离地太近就别挂了，直接落地更自然
 IDLE_RANGE = (1.2, 4.0)
 WALK_RANGE = (0.8, 2.5)
 CLING_RANGE = (6.0, 15.0)
+CROSS_CHANCE = 0.45     # 每次停下来抱手的概率
+# 抱着手的待机要站得更久，用普通的 1.2~4 秒经常刚抱上就又走了。
+# 注意下界必须 >= IDLE_RANGE 的上界: 两个区间一重叠，"抱手站得更久"就只是
+# 概率上成立，实际还是会抽到比垂手更短的时长。tests 里有断言盯着这条。
+CROSSED_IDLE_RANGE = (4.0, 7.5)
 
 
 class PetBrain:
@@ -60,6 +77,7 @@ class PetBrain:
         self.facing = 1          # 1 朝右, -1 朝左
 
         self.state = State.IDLE
+        self.posture = Posture.RELAXED
         self.state_t = 0.0       # 进入当前状态后过了多久
         # 距离上次"被用户打扰"过了多久，攒够 SLEEP_AFTER 就去睡。
         # 注意只有交互(grab/wake/head_pat)才清零 —— 它自己溜达一圈不算被打扰，
@@ -234,10 +252,17 @@ class PetBrain:
     def _enter(self, state: State) -> None:
         self.state = state
         self.state_t = 0.0
+        # 除了发呆，其它状态手都有正事要干 —— 走路要摆、被抓要扬、贴墙要抓着，
+        # 所以默认先把姿势清回垂手，只有 IDLE 分支才可能改成抱手。
+        self.posture = Posture.RELAXED
 
         if state is State.IDLE:
             self.vx = self.vy = 0.0
-            self.next_switch = random.uniform(*IDLE_RANGE)
+            if random.random() < CROSS_CHANCE:
+                self.posture = Posture.CROSSED
+                self.next_switch = random.uniform(*CROSSED_IDLE_RANGE)
+            else:
+                self.next_switch = random.uniform(*IDLE_RANGE)
         elif state is State.WALK:
             self.next_switch = random.uniform(*WALK_RANGE)
             dx = self._pointer_dx()

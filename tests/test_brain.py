@@ -12,12 +12,15 @@ import unittest
 from vpet.state import (
     CLING_MARGIN,
     CLING_MIN_HEIGHT,
+    CROSSED_IDLE_RANGE,
     DIZZY_TIME,
     FOLLOW_DEADZONE,
     GRAVITY,
     HAPPY_TIME,
+    IDLE_RANGE,
     SLEEP_AFTER,
     PetBrain,
+    Posture,
     State,
 )
 
@@ -265,6 +268,48 @@ class TestSleep(unittest.TestCase):
         b.undisturbed = 999.0
         b.grab()
         self.assertEqual(b.undisturbed, 0.0)
+
+
+class TestPosture(unittest.TestCase):
+    """抱手是待机时的姿势变化，和"在做什么"正交，所以不是一个 State。"""
+
+    def test_starts_relaxed(self):
+        self.assertEqual(brain().posture, Posture.RELAXED)
+
+    def test_every_other_state_needs_its_hands(self):
+        # 走路要摆手、被抓要扬手、贴墙要抓着 —— 抱着手做这些都不对
+        for st in (State.WALK, State.DRAG, State.FALL, State.SLEEP,
+                   State.HAPPY, State.CLING, State.DIZZY):
+            b = brain()
+            b.posture = Posture.CROSSED
+            b._enter(st)
+            self.assertEqual(b.posture, Posture.RELAXED, f"{st.value} 不该保持抱手")
+
+    def test_both_postures_occur_when_idling(self):
+        b = brain()
+        seen = set()
+        for _ in range(200):
+            b._enter(State.IDLE)
+            seen.add(b.posture)
+        self.assertEqual(seen, {Posture.RELAXED, Posture.CROSSED})
+
+    def test_the_two_idle_durations_do_not_overlap(self):
+        """区间一重叠，"抱手站得更久"就只是概率上成立 —— 实际仍会抽到比垂手更短的。
+
+        这里断言常量本身而不是采样值: 采样断言在边界上会偶发失败，
+        而且失败时指向的是运气而不是配置。
+        """
+        self.assertGreaterEqual(CROSSED_IDLE_RANGE[0], IDLE_RANGE[1])
+
+    def test_each_posture_draws_from_its_own_range(self):
+        b = brain()
+        durations = {Posture.RELAXED: [], Posture.CROSSED: []}
+        for _ in range(200):
+            b._enter(State.IDLE)
+            durations[b.posture].append(b.next_switch)
+        for posture, span in ((Posture.RELAXED, IDLE_RANGE), (Posture.CROSSED, CROSSED_IDLE_RANGE)):
+            self.assertGreaterEqual(min(durations[posture]), span[0], posture.value)
+            self.assertLessEqual(max(durations[posture]), span[1], posture.value)
 
 
 class TestDrag(unittest.TestCase):

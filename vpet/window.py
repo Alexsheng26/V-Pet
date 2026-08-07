@@ -102,7 +102,8 @@ class PetWindow(QWidget):
         self.move(round(self.brain.x), round(self.brain.y))
 
         self._frame = self.provider.render(
-            self.brain.state, self._t, self.brain.facing, self.devicePixelRatioF()
+            self.brain.state, self._t, self.brain.facing, self.devicePixelRatioF(),
+            self.brain.posture,
         )
         self.update()
         self._sync_pointer(cursor)
@@ -278,7 +279,8 @@ class PetWindow(QWidget):
         # 变大之后可能已经陷进地面里了，提回地面上
         self.brain.y = min(self.brain.y, float(self.brain.ground))
         self._frame = self.provider.render(
-            self.brain.state, self._t, self.brain.facing, self.devicePixelRatioF()
+            self.brain.state, self._t, self.brain.facing, self.devicePixelRatioF(),
+            self.brain.posture,
         )
         self.tray.setIcon(QIcon(QPixmap.fromImage(self.provider.render(State.IDLE, 0.0, 1, 1.0))))
         self.save_config()
