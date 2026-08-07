@@ -2,7 +2,7 @@
 
 一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它摔懵，也可以贴到屏幕边上挂着。
 
-![state](https://img.shields.io/badge/status-v0.4-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-63-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
+![state](https://img.shields.io/badge/status-v0.4-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-73-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![八个状态](docs/states.png)
 
@@ -127,7 +127,7 @@ vpet/window.py     窗口：透明、置顶、拖拽、点击穿透、托盘、�
 vpet/config.py     配置读写。不 import Qt
 vpet/autostart.py  开机自启（HKCU 的 Run 键）
 tools/preview.py   生成上面那张状态对照图
-tests/             63 个测试，用 offscreen 平台跑，不需要显示器
+tests/             73 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
