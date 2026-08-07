@@ -28,10 +28,12 @@ import ctypes
 import sys
 from ctypes import wintypes
 
-from PySide6.QtCore import QElapsedTimer, QPoint, Qt, QTimer
-from PySide6.QtGui import QAction, QCursor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QElapsedTimer, QPoint, QRect, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
+from . import autostart
+from .config import SIZE_CHOICES, Config
 from .state import PetBrain, State
 
 FRAME_MS = 16            # ~60fps
@@ -46,9 +48,10 @@ _WS_EX_TRANSPARENT = 0x00000020
 
 
 class PetWindow(QWidget):
-    def __init__(self, provider) -> None:
+    def __init__(self, provider, config: Config | None = None) -> None:
         super().__init__()
         self.provider = provider
+        self.config = config or Config()
         size = provider.size
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -68,6 +71,8 @@ class PetWindow(QWidget):
 
         self._build_actions()
         self._build_tray()
+        self._restore_position()
+        self._follow_action.setChecked(self.config.follow)
 
         self._clock = QElapsedTimer()
         self._clock.start()
@@ -169,6 +174,9 @@ class PetWindow(QWidget):
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
         menu.addAction(self._follow_action)
+        menu.addMenu(self._size_menu)
+        menu.addAction(self._autostart_action)
+        menu.addSeparator()
         menu.addAction("打个盹", self.brain.doze_off)
         menu.addAction("藏起来", self.hide)
         menu.addSeparator()
@@ -178,6 +186,32 @@ class PetWindow(QWidget):
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key_Escape:
             QApplication.quit()
+
+    # --- 配置 -------------------------------------------------------------
+    def _restore_position(self) -> None:
+        """恢复上次的位置，但**必须校验它还在某块屏幕上**。
+
+        存的坐标可能来自一块已经拔掉的显示器，或者分辨率被改小了。
+        直接 move 过去的话，宠物会待在屏幕外 —— 进程在跑、托盘图标也在，
+        就是死活看不见，这种问题很难被想到。
+        """
+        cfg = self.config
+        if cfg.x is None or cfg.y is None:
+            return
+        rect = QRect(cfg.x, cfg.y, self.width(), self.height())
+        if not any(s.availableGeometry().intersects(rect) for s in QApplication.screens()):
+            return
+        self.brain.x, self.brain.y = float(cfg.x), float(cfg.y)
+        self.move(cfg.x, cfg.y)
+
+    def save_config(self, path=None) -> bool:
+        """path 只为测试留的口子，正常调用不传，走默认位置。"""
+        self.config.x = int(round(self.brain.x))
+        self.config.y = int(round(self.brain.y))
+        self.config.follow = self.brain.follow
+        if getattr(self.provider, "resizable", False):
+            self.config.size = self.provider.size
+        return self.config.save(path)
 
     # --- 菜单与托盘 -------------------------------------------------------
     def _build_actions(self) -> None:
@@ -189,10 +223,53 @@ class PetWindow(QWidget):
         self._toggle_action = QAction("藏起来", self)
         self._toggle_action.triggered.connect(self._toggle_visible)
 
+        # 初始勾选状态以**注册表为准**而不是配置文件: 用户可能在任务管理器的
+        # 启动项里手动关掉了，那边才是真相。
+        self._autostart_action = QAction("开机自启", self)
+        self._autostart_action.setCheckable(True)
+        self._autostart_action.setChecked(autostart.is_enabled())
+        self._autostart_action.toggled.connect(self._set_autostart)
+
+        self._size_menu = QMenu("大小", self)
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for n in SIZE_CHOICES:
+            act = QAction(f"{n}px", self, checkable=True)
+            act.setChecked(n == self.provider.size)
+            act.triggered.connect(lambda _checked, v=n: self._set_size(v))
+            group.addAction(act)
+            self._size_menu.addAction(act)
+        self._size_menu.setEnabled(getattr(self.provider, "resizable", False))
+
     def _set_follow(self, on: bool) -> None:
         self.brain.follow = on
         if on:
             self.brain.wake()
+
+    def _set_autostart(self, on: bool) -> None:
+        actual = autostart.set_enabled(on)
+        self.config.autostart = actual
+        if actual != on:
+            # 写注册表失败(组策略锁了之类)，把勾选框拨回真实状态，
+            # 别让菜单显示一个根本没生效的设置
+            self._autostart_action.blockSignals(True)
+            self._autostart_action.setChecked(actual)
+            self._autostart_action.blockSignals(False)
+
+    def _set_size(self, n: int) -> None:
+        if not getattr(self.provider, "resizable", False):
+            return
+        self.provider.size = n
+        self.config.size = n
+        self.setFixedSize(n, n)
+        self.brain.size = n
+        self.brain.set_bounds(self._screen_bounds())
+        # 变大之后可能已经陷进地面里了，提回地面上
+        self.brain.y = min(self.brain.y, float(self.brain.ground))
+        self._frame = self.provider.render(
+            self.brain.state, self._t, self.brain.facing, self.devicePixelRatioF()
+        )
+        self.tray.setIcon(QIcon(QPixmap.fromImage(self.provider.render(State.IDLE, 0.0, 1, 1.0))))
 
     def _build_tray(self) -> None:
         icon = QIcon(QPixmap.fromImage(self.provider.render(State.IDLE, 0.0, 1, 1.0)))
@@ -201,8 +278,10 @@ class PetWindow(QWidget):
 
         menu = QMenu()
         menu.addAction(self._follow_action)
-        menu.addAction(self._toggle_action)
+        menu.addMenu(self._size_menu)
+        menu.addAction(self._autostart_action)
         menu.addSeparator()
+        menu.addAction(self._toggle_action)
         menu.addAction("退出", QApplication.quit)
 
         self.tray.setContextMenu(menu)

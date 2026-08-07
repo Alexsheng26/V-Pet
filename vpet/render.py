@@ -88,6 +88,7 @@ class BlobPet:
     """
 
     size = PET_SIZE
+    resizable = True        # 全是矢量画的，改 size 就整体缩放
 
     BODY_LIGHT = QColor(255, 232, 142)
     BODY_MID = QColor(250, 202, 66)
@@ -466,6 +467,8 @@ def _sparkle_path(cx: float, cy: float, r: float) -> QPainterPath:
 class FolderSprites:
     """按 sprites/{state}/*.png 的约定加载素材。文件名排序即帧序。"""
 
+    resizable = False       # 尺寸由素材本身决定，缩放会糊
+
     def __init__(self, root: Path) -> None:
         self.root = root
         self.frames: dict[str, list[QImage]] = {}
@@ -497,10 +500,16 @@ class FolderSprites:
         return img
 
 
-def pick_provider(sprites_dir: Path):
-    """有素材就用素材，没有就用现画的。"""
+def pick_provider(sprites_dir: Path, size: int = PET_SIZE):
+    """有素材就用素材，没有就用现画的。
+
+    size 只对现画的角色生效 —— 位图素材的尺寸由素材自己决定，
+    缩放只会糊掉，配置里的大小对它没有意义。
+    """
     if sprites_dir.is_dir():
         folder = FolderSprites(sprites_dir)
         if folder.has_frames():
             return folder
-    return BlobPet()
+    pet = BlobPet()
+    pet.size = size
+    return pet

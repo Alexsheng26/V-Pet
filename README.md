@@ -2,7 +2,7 @@
 
 一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它摔懵，也可以贴到屏幕边上挂着。
 
-![state](https://img.shields.io/badge/status-v0.3-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-36-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
+![state](https://img.shields.io/badge/status-v0.4-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-63-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![八个状态](docs/states.png)
 
@@ -53,8 +53,12 @@ python main.py
 | 双击 / 在它身上来回搓 | 摸头，眯眼冒爱心 |
 | 右键 → 跟着鼠标 | 追着光标跑；追上就停下，不会在原地抖 |
 | 放着不管 30 秒 | 睡着，冒 z；点一下就醒 |
+| 右键 / 托盘 → 大小 | 96 / 120 / 144 / 176 / 208 px，即时生效 |
+| 右键 / 托盘 → 开机自启 | 默认关。勾上才会写 HKCU 的 Run 键 |
 | 右键 / 托盘 | 打个盹、藏起来、退出 |
 | Esc | 退出 |
+
+位置、大小、跟随开关、自启状态都会记住，下次打开还在原地。
 
 "来回搓"和"匀速划过去"是区分得开的：判定值每帧按 `RUB_DECAY` 衰减，
 慢慢划过去攒的速度赶不上衰减，只有真的来回蹭才触发。
@@ -87,7 +91,28 @@ Qt 只能整个窗口开关 `WA_TransparentForMouseEvents`，做不到按像素�
 省掉了为命中测试再渲染一遍。摸头的"搓"判定也挂在同一个轮询上 ——
 那个循环每帧已经算出"光标在不在宠物身上"了，再累加一下光标位移就够了。
 
-### 3. 退出路径要先于一切
+### 3. 配置写坏了，宠物就再也打不开了
+
+配置存在 `%APPDATA%\v-pet\config.json`。这个文件的特殊之处在于**它坏掉的后果不成比例**：
+一个没有主窗口、没有控制台的桌面宠物，启动失败时连报错的地方都没有，
+用户看到的只是"双击了没反应"。所以 `config.py` 有三条硬要求：
+
+- **原子写** —— 先写同目录下的临时文件再 `os.replace`。直接 `open(path,"w")` 的话，
+  写到一半崩溃就会留下半个 JSON。临时文件必须和目标同目录，跨文件系统的 replace 不是原子的。
+- **容错读** —— 文件缺失、内容截断、根节点不是对象、字段类型不对，一律退回默认值，绝不抛异常。
+- **字段逐个取** —— 少了的用默认值（旧配置能被新版本读），多了的直接忽略（新配置回退到旧版本也能读）。
+
+`normalise()` 还负责把脏值收拾干净，比如坐标是字符串 `"120"` 就转成整数、
+尺寸超范围就夹到合法区间。有一个不太直觉的特判：**`bool` 是 `int` 的子类**，
+不挡一下的话 `{"x": true}` 会让宠物跑到横坐标 1 的位置去。
+
+### 4. 恢复位置必须校验它还在不在屏幕上
+
+存下来的坐标可能来自一块已经拔掉的显示器，或者分辨率被调小了。直接 `move()` 过去，
+宠物就待在屏幕外面 —— 进程在跑、托盘图标也在，就是死活看不见。
+所以 `_restore_position()` 会先确认那个矩形和某块屏幕的可用区域有交集，没有就忽略、走默认位置。
+
+### 5. 退出路径要先于一切
 
 无边框窗口没有关闭按钮。托盘菜单和 Esc 是在写第一行渲染代码之前接上的，
 否则很容易做出一个只能开任务管理器杀掉的窗口。
@@ -98,9 +123,11 @@ Qt 只能整个窗口开关 `WA_TransparentForMouseEvents`，做不到按像素�
 main.py            入口
 vpet/state.py      行为：状态机 + 物理。不 import Qt
 vpet/render.py     渲染：状态 -> QImage，含与角色无关的姿态系统
-vpet/window.py     窗口：透明、置顶、拖拽、点击穿透、托盘
+vpet/window.py     窗口：透明、置顶、拖拽、点击穿透、托盘、菜单
+vpet/config.py     配置读写。不 import Qt
+vpet/autostart.py  开机自启（HKCU 的 Run 键）
 tools/preview.py   生成上面那张状态对照图
-tests/             36 个测试，用 offscreen 平台跑，不需要显示器
+tests/             63 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
@@ -170,8 +197,8 @@ python -m unittest discover
 
 ## 后续
 
+- [x] 配置持久化（位置、大小、跟随开关、开机自启）
 - [ ] 抱手/叉腰之类的待机姿势变化
-- [ ] 配置持久化（位置、缩放、跟随开关、是否开机自启）
 - [ ] 多显示器跨屏拖拽的边界处理
 - [ ] 打包成免安装 exe
 
