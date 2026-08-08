@@ -14,6 +14,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from .paths import app_dir, is_frozen
+
 APP_NAME = "v-pet"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -28,14 +30,13 @@ def launch_command() -> str:
     刻意用 pythonw.exe 而不是 python.exe：后者每次开机会弹一个黑色控制台窗口
     并且一直挂在任务栏上，很难看。
     """
-    if getattr(sys, "frozen", False):          # 以后打包成 exe 时走这条
+    if is_frozen():                            # 打包后 exe 自己就是入口
         return f'"{sys.executable}"'
     exe = Path(sys.executable)
     windowless = exe.with_name("pythonw.exe")
     if windowless.exists():
         exe = windowless
-    script = Path(__file__).resolve().parent.parent / "main.py"
-    return f'"{exe}" "{script}"'
+    return f'"{exe}" "{app_dir() / "main.py"}"'
 
 
 def is_enabled(key_path: str = RUN_KEY, name: str = APP_NAME) -> bool:

@@ -1,27 +1,63 @@
 """v-pet 入口。
 
     python main.py
+    python main.py --selftest      # 不开窗口，渲一遍所有状态，用退出码报告结果
 """
 
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
 from vpet.config import Config
+from vpet.paths import sprites_dir
 from vpet.render import pick_provider
+from vpet.state import Posture, State
 from vpet.window import PetWindow
 
 
+def selftest() -> int:
+    """打包后的验证入口。
+
+    存在的理由：为了压体积，打包时删掉了几十兆用不上的 Qt DLL。
+    删错一个的表现是 exe 双击没反应 —— 它是 console=False 的窗口程序，
+    连异常都没地方显示。所以留一条能用**退出码**回话的路径。
+
+    "进程还活着"证明不了什么，得真的渲出像素来。
+    """
+    app = QApplication(sys.argv)
+    try:
+        provider = pick_provider(sprites_dir())
+        for state in State:
+            for posture in Posture:
+                img = provider.render(state, 0.7, 1, 1.5, posture)
+                if img.isNull() or img.width() == 0:
+                    return 1
+                # 全透明说明画了个空的，和渲染失败一样糟
+                if not any(img.pixelColor(x, y).alpha() > 8
+                           for y in range(0, img.height(), 7)
+                           for x in range(0, img.width(), 7)):
+                    return 1
+        PetWindow(provider, Config())        # 托盘图标、菜单、Win32 调用都在构造里
+    except Exception:
+        return 1
+    finally:
+        app.quit()
+    return 0
+
+
 def main() -> int:
+    if "--selftest" in sys.argv:
+        return selftest()
+
     app = QApplication(sys.argv)
     # 托盘还在，"藏起来"就不该导致进程退出
     app.setQuitOnLastWindowClosed(False)
 
     config = Config.load()
-    provider = pick_provider(Path(__file__).parent / "sprites", config.size)
+    # 不能写 Path(__file__).parent —— 打包后它不指向 exe 所在目录
+    provider = pick_provider(sprites_dir(), config.size)
     window = PetWindow(provider, config)
 
     # 挂在 aboutToQuit 上而不是 closeEvent: 这个窗口正常情况下根本不会被 close，

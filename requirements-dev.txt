@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# 只有打包时需要。跑程序和跑测试都用不到。
+pyinstaller>=6.0

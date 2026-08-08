@@ -5,7 +5,8 @@ __pycache__/
 venv/
 build/
 dist/
-*.spec
+# 注意别写 *.spec —— v-pet.spec 是手写的构建配置，要提交。
+# 那条通配符是给 pyinstaller 自动生成的 spec 用的，我们不用自动生成的那种。
 
 .vscode/
 .idea/

@@ -2,7 +2,7 @@
 
 一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它摔懵，也可以贴到屏幕边上挂着。
 
-![state](https://img.shields.io/badge/status-v0.4-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-80-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
+![state](https://img.shields.io/badge/status-v0.4-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-86-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![状态与姿势对照](docs/states.png)
 
@@ -127,8 +127,12 @@ vpet/render.py     渲染：状态 -> QImage，含与角色无关的姿态系统
 vpet/window.py     窗口：透明、置顶、拖拽、点击穿透、托盘、菜单
 vpet/config.py     配置读写。不 import Qt
 vpet/autostart.py  开机自启（HKCU 的 Run 键）
+vpet/paths.py      程序目录解析（打包后 __file__ 不再指向仓库）
 tools/preview.py   生成上面那张状态对照图
-tests/             80 个测试，用 offscreen 平台跑，不需要显示器
+tools/make_icon.py 从角色渲染多尺寸 .ico
+tools/build.py     打包 + 自检
+v-pet.spec         PyInstaller 配置（手写的，要提交）
+tests/             86 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
@@ -202,6 +206,65 @@ sprites/
 加上这条之后它立刻又抓出 dizzy 甩手 + 旋转叠加时会顶到左边。
 → `test_nothing_touches_the_canvas_edge`
 
+## 打包
+
+```bash
+pip install -r requirements-dev.txt
+python tools/build.py
+```
+
+产物在 `dist/v-pet/`，整个文件夹拷到哪儿都能跑，目标机器不需要装 Python。
+
+```
+dist/v-pet/
+  v-pet.exe      2.0 MB
+  sprites/       换皮用，见下
+  _internal/     Qt 和 Python 运行时
+```
+
+**整体 64.6 MB，冷启动 1.2 秒**（`--selftest` 跑完全部渲染的耗时）。
+未经裁剪的话是 111 MB —— 删掉的 46 MB 全是一个字节都用不上的东西，
+其中 `opengl32sw.dll` 一个就 19.7 MB（Mesa 的软件 OpenGL 回退，纯光栅绘制的
+Widgets 程序碰都不碰它），剩下是 QML 运行时、PDF、OpenSSL。
+
+三个决定：
+
+**用 onedir 不用 onefile。** onefile 是单个 exe，看着更"免安装"，但它每次启动都要把
+整个包体解压到临时目录 —— PySide6 一百多兆，冷启动要好几秒。一个开机自启的桌宠不能这样。
+放在一个文件夹里、桌面建个快捷方式，实际体验一样，还快得多。
+
+**`sprites/` 不打进包体。** PyInstaller 的 `datas` 只会落进 `_internal/`，
+而 `paths.app_dir()` 指的是 exe 所在目录。更重要的是那个目录本来就是留给用户丢素材的，
+打进包体就改不了了。所以由构建脚本在打包后放到 exe 旁边。
+
+**图标是从角色本身渲染出来的**，不是外部素材。`tools/make_icon.py` 渲 7 个尺寸
+（16 到 256）拼成一个多尺寸 `.ico` —— Qt 能写 ico 但一次只写一个尺寸，
+所以 ICO 头是手写的，每个尺寸的负载直接放 PNG。小尺寸先画大再平滑缩下去，
+直接按 16px 画矢量图形全是锯齿。
+
+## 打包会逼出来的东西
+
+打包最大的价值是它会**逼出代码里对"自己在哪个目录"的隐含假设**。
+`Path(__file__).parent` 在开发时指仓库，冻结之后 onedir 指 `_internal/`、
+onefile 指一个每次启动都重建的临时目录 —— 往那里写东西下次就没了。
+所以定位程序目录必须走 `vpet/paths.py`。
+
+`autostart.launch_command()` 里那条 `sys.frozen` 分支平时根本走不到。
+`tests/test_paths.py` 把冻结状态模拟出来测了 —— 否则等发现路径不对时，
+你面对的是一个没有控制台、双击就闪退的 exe，什么都看不到。
+
+同样的理由，打包产物带一个自检开关：
+
+```bash
+dist/v-pet/v-pet.exe --selftest    # 不开窗口，渲一遍所有状态，用退出码回话
+```
+
+为了压体积，打包时按文件名删掉了几十兆 Qt DLL（`excludes` 只管 Python 模块分析，
+PySide6 的 hook 是整包拷 DLL 的，排掉 `PySide6.QtQml` 并不会让 `Qt6Qml.dll` 不进包）。
+删错一个的表现就是双击没反应。`console=False` 的窗口程序连异常都没地方显示，
+所以必须留一条能用**退出码**说话的路径。而且自检不能只看"进程还活着" ——
+得真的渲出像素来：每个状态都渲一遍，全透明的帧和渲染失败一样算不通过。
+
 ## 跑测试
 
 ```bash
@@ -213,7 +276,7 @@ python -m unittest discover
 - [x] 配置持久化（位置、大小、跟随开关、开机自启）
 - [x] 抱手待机姿势
 - [ ] 多显示器跨屏拖拽的边界处理
-- [ ] 打包成免安装 exe
+- [x] 打包成免安装 exe
 
 ## 兼容性
 
