@@ -2,7 +2,7 @@
 
 一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它摔懵，也可以贴到屏幕边上挂着。
 
-![state](https://img.shields.io/badge/status-v0.5-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-86-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
+![state](https://img.shields.io/badge/status-v0.6-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-117-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![状态与姿势对照](docs/states.png)
 
@@ -113,7 +113,31 @@ Qt 只能整个窗口开关 `WA_TransparentForMouseEvents`，做不到按像素�
 宠物就待在屏幕外面 —— 进程在跑、托盘图标也在，就是死活看不见。
 所以 `_restore_position()` 会先确认那个矩形和某块屏幕的可用区域有交集，没有就忽略、走默认位置。
 
-### 5. 退出路径要先于一切
+### 5. 多屏的"边界"不是一个矩形
+
+单屏时边界就是屏幕矩形，多屏之后这个模型直接不成立：
+
+- 屏幕之间的**接缝不是墙**，宠物该走过去；只有最外侧的边缘才是墙
+- 两块屏可能高度不同、上下有偏移，**接缝处地面高度会变**
+- 排列可能是 L 形或者错开的，于是存在**没有任何屏幕的死区**
+
+最容易想到的做法是取所有屏幕的外接矩形当边界。它是错的：宠物会走进死区，
+进程还在跑、托盘图标还在，人就是找不着它。所以 `screens.py` 保留每块屏各自的矩形，
+逐块回答"能不能往那边走"。
+
+换屏看的是宠物**中心**有没有越过接缝，不是整个窗口有没有出本屏 ——
+后者会让宠物在离边缘一个身位的地方就被拦下，永远走不到接缝。跨越过程中窗口
+同时压在两块屏上，本来就该这样。
+
+接缝两侧地面不一样高时，往上是**迈台阶**（直接抬上去，不打断走路），
+往下超过 12px 就是**走下了台阶**（切到下落状态，保留水平速度）。
+贴边挂住也只在没有邻屏的那一侧生效，否则宠物会吊在双屏桌面的正中间。
+
+屏幕配置变化用**指纹比对**检测，不接 `screenAdded` / `availableGeometryChanged` 那一堆信号：
+新插上来的屏还得记得给它也接一遍，漏一个就是一个静默的错误状态。
+每帧比几个整数元组的开销可以忽略。
+
+### 6. 退出路径要先于一切
 
 无边框窗口没有关闭按钮。托盘菜单和 Esc 是在写第一行渲染代码之前接上的，
 否则很容易做出一个只能开任务管理器杀掉的窗口。
@@ -127,17 +151,18 @@ vpet/render.py     渲染：状态 -> QImage，含与角色无关的姿态系统
 vpet/window.py     窗口：透明、置顶、拖拽、点击穿透、托盘、菜单
 vpet/config.py     配置读写。不 import Qt
 vpet/autostart.py  开机自启（HKCU 的 Run 键）
+vpet/screens.py    多屏几何：接缝、死区、相邻判定。不 import Qt
 vpet/paths.py      程序目录解析（打包后 __file__ 不再指向仓库）
 tools/preview.py   生成上面那张状态对照图
 tools/make_icon.py 从角色渲染多尺寸 .ico
 tools/build.py     打包 + 自检
 v-pet.spec         PyInstaller 配置（手写的，要提交）
-tests/             86 个测试，用 offscreen 平台跑，不需要显示器
+tests/             117 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
 
-**行为 ⊥ Qt。** `state.py` 一个像素都不画，只回答"现在什么状态、在哪"。
+**行为 ⊥ Qt。** `state.py` 和 `screens.py` 一个像素都不画，只回答"现在什么状态、在哪"。
 回报是行为逻辑能脱离 GUI 直接跑单元测试 —— 重力、贴边判定、甩出去的速度上限
 这些手感参数，改完立刻能验证，不用真去拖一遍窗口。
 
@@ -275,7 +300,7 @@ python -m unittest discover
 
 - [x] 配置持久化（位置、大小、跟随开关、开机自启）
 - [x] 抱手待机姿势
-- [ ] 多显示器跨屏拖拽的边界处理
+- [x] 多显示器：跨屏行走、接缝台阶、死区、拔屏恢复
 - [x] 打包成免安装 exe
 
 ## 兼容性

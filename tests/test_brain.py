@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import unittest
 
+from vpet.screens import ScreenLayout, layout_from_rects
 from vpet.state import (
     CLING_MARGIN,
     CLING_MIN_HEIGHT,
@@ -31,7 +32,7 @@ STEP = 1 / 60
 
 
 def brain() -> PetBrain:
-    return PetBrain(SIZE, BOUNDS)
+    return PetBrain(SIZE, ScreenLayout.single(BOUNDS))
 
 
 def run(b: PetBrain, seconds: float, until: State | None = None) -> None:
@@ -268,6 +269,123 @@ class TestSleep(unittest.TestCase):
         b.undisturbed = 999.0
         b.grab()
         self.assertEqual(b.undisturbed, 0.0)
+
+
+class TestMultipleScreens(unittest.TestCase):
+    """多屏下"边界"不再是一个矩形：接缝不是墙，外侧才是。"""
+
+    SIDE_BY_SIDE = [(0, 0, 1000, 800), (1000, 0, 2000, 800)]
+    STEPPED_UP = [(0, 0, 1000, 800), (1000, 0, 2000, 600)]   # 右屏更矮 → 地面更高
+    GAPPED = [(0, 0, 1000, 800), (1200, 0, 2200, 800)]       # 中间是死区
+
+    def on(self, rects) -> PetBrain:
+        return PetBrain(SIZE, layout_from_rects(rects))
+
+    def walking(self, rects, x: float, direction: int, screen: int = 0) -> PetBrain:
+        b = self.on(rects)
+        b.screen = screen
+        b._enter(State.WALK)
+        # 关掉随机的走路时长。_enter(WALK) 会抽一个 0.8~2.5 秒的值，
+        # 抽短了宠物还没走到接缝就自己停下来了 —— 这些用例测的是跨屏，
+        # 不该被那个随机数变成偶发失败。
+        b.next_switch = 999.0
+        b.vx = direction * abs(b.vx)
+        b.facing = direction
+        b.x, b.y = x, b.ground
+        return b
+
+    # 这些用例都只跑很短的一段：WALK 本身 0.8~2.5 秒就会自然切回 IDLE，
+    # 观察窗口开长了，断言到的是随机状态机而不是跨屏行为。
+    # 跨过接缝只需要走 10px，0.2 秒足够。
+    def test_walks_across_the_seam_instead_of_turning_around(self):
+        b = self.walking(self.SIDE_BY_SIDE, 940.0, 1)
+        run(b, 0.6)
+        self.assertEqual(b.screen, 1, "没走过接缝")
+        self.assertGreater(b.x, 950)
+
+    def test_still_turns_around_at_the_outer_edge(self):
+        b = self.walking(self.SIDE_BY_SIDE, 1880.0, 1, screen=1)
+        run(b, 1.0)
+        self.assertLessEqual(b.x, 1900)
+        self.assertEqual(b.screen, 1)
+        self.assertLess(b.vx, 0, "撞到最外侧该掉头")
+
+    def test_a_gap_between_screens_is_a_wall(self):
+        """否则宠物会走进死区，进程还在、托盘还在，人就是找不着它。"""
+        b = self.walking(self.GAPPED, 940.0, 1)
+        run(b, 3.0)
+        self.assertEqual(b.screen, 0)
+        self.assertLessEqual(b.x, 900)
+
+    def test_steps_up_onto_a_shorter_screen(self):
+        b = self.walking(self.STEPPED_UP, 940.0, 1)
+        run(b, 0.6)
+        self.assertEqual(b.screen, 1)
+        self.assertEqual(b.state, State.WALK, "迈个台阶不该打断走路")
+        self.assertEqual(b.y, b.ground)
+
+    def test_walks_off_a_ledge_and_falls(self):
+        # 反过来走：从矮屏走回高屏，等于走下一个台阶
+        b = self.walking(self.STEPPED_UP, 1010.0, -1, screen=1)
+        run(b, 3.0, until=State.FALL)
+        self.assertEqual(b.state, State.FALL, "落差 200px 该掉下去而不是瞬移")
+        self.assertEqual(b.screen, 0)
+
+    def test_does_not_cling_to_an_internal_seam(self):
+        """挂在两块屏中间等于吊在桌面正中，很怪。"""
+        b = self.on(self.SIDE_BY_SIDE)
+        b.grab()
+        b.x, b.y = 995.0, 200.0     # 贴着屏 1 的左边缘，但那是接缝不是墙
+        b.release()
+        self.assertEqual(b.state, State.FALL)
+
+    def test_still_clings_to_the_outer_edge(self):
+        b = self.on(self.SIDE_BY_SIDE)
+        b.grab()
+        b.x, b.y = 1895.0, 200.0    # 屏 1 的右边缘，整个桌面的最外侧
+        b.release()
+        self.assertEqual(b.state, State.CLING)
+
+    def test_release_re_resolves_which_screen_it_is_on(self):
+        b = self.on(self.SIDE_BY_SIDE)
+        b.grab()
+        b.x, b.y = 1400.0, 300.0    # 被拖到了副屏
+        b.release()
+        self.assertEqual(b.screen, 1)
+
+    def test_dropped_in_a_dead_zone_lands_on_the_nearest_screen(self):
+        b = self.on(self.GAPPED)
+        b.grab()
+        b.x, b.y = 1150.0, 300.0    # 两块屏之间，没有任何屏幕
+        b.release()
+        run(b, 5.0, until=State.IDLE)
+        self.assertIsNotNone(b.layout.index_at(b.x + SIZE / 2, b.y + SIZE / 2))
+
+    def test_unplugging_a_monitor_does_not_strand_the_pet(self):
+        """位置必须**立刻**挪回来，不能指望它自己走回来。
+
+        宠物默认在发呆，发呆是不动的 —— 只改屏幕下标的话，表现就是拔掉副屏后
+        宠物再也找不着了，而托盘图标还在。
+        """
+        b = self.on(self.SIDE_BY_SIDE)
+        b.x, b.y, b.screen = 1500.0, 700.0, 1
+        b.set_layout(layout_from_rects([(0, 0, 1000, 800)]))
+        self.assertEqual(b.screen, 0)
+        self.assertLessEqual(b.x, 900, "还停在一块已经不存在的屏幕上")
+        self.assertIsNotNone(b.layout.index_at(b.x + SIZE / 2, b.y + SIZE / 2))
+
+    def test_shrinking_a_screen_pulls_the_pet_back_in(self):
+        # 改分辨率、改缩放走的是同一条路径
+        b = self.on([(0, 0, 1920, 1080)])
+        b.x, b.y = 1800.0, 980.0
+        b.set_layout(layout_from_rects([(0, 0, 1280, 720)]))
+        self.assertLessEqual(b.x, 1280 - SIZE)
+        self.assertLessEqual(b.y, b.ground)
+
+    def test_single_screen_behaves_exactly_as_before(self):
+        b = brain()
+        self.assertIsNone(b.layout.neighbour(0, 1))
+        self.assertIsNone(b.layout.neighbour(0, -1))
 
 
 class TestPosture(unittest.TestCase):

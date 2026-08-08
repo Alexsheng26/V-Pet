@@ -34,6 +34,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
 from . import autostart
 from .config import SIZE_CHOICES, Config
+from .screens import Screen, ScreenLayout
 from .state import PetBrain, State
 
 FRAME_MS = 16            # ~60fps
@@ -69,7 +70,9 @@ class PetWindow(QWidget):
         self.setFixedSize(size, size)
         self.setWindowTitle("v-pet")
 
-        self.brain = PetBrain(size, self._screen_bounds())
+        self._layout_sig: tuple | None = None
+        self.brain = PetBrain(size, self._read_layout())
+        self._layout_sig = self.brain.layout.signature()
         self._frame = provider.render(State.IDLE, 0.0, 1, self.devicePixelRatioF())
         self._t = 0.0
         self._grab_offset = QPoint()
@@ -96,7 +99,7 @@ class PetWindow(QWidget):
         self._t += dt
         cursor = QCursor.pos()
 
-        self.brain.set_bounds(self._screen_bounds())
+        self._sync_layout()
         self.brain.set_pointer(float(cursor.x()), float(cursor.y()))
         self.brain.update(dt)
         self.move(round(self.brain.x), round(self.brain.y))
@@ -275,9 +278,7 @@ class PetWindow(QWidget):
         self.config.size = n
         self.setFixedSize(n, n)
         self.brain.size = n
-        self.brain.set_bounds(self._screen_bounds())
-        # 变大之后可能已经陷进地面里了，提回地面上
-        self.brain.y = min(self.brain.y, float(self.brain.ground))
+        self.brain.set_layout(self._read_layout())   # 顺带把变大后陷进地面的位置提回来
         self._frame = self.provider.render(
             self.brain.state, self._t, self.brain.facing, self.devicePixelRatioF(),
             self.brain.posture,
@@ -314,15 +315,35 @@ class PetWindow(QWidget):
             self._toggle_action.setText("藏起来")
 
     # --- 屏幕 -------------------------------------------------------------
-    def _screen_bounds(self) -> tuple[int, int, int, int]:
-        """可用区域已排除任务栏，所以宠物会正好站在任务栏上沿。
+    def _read_layout(self) -> ScreenLayout:
+        """把 Qt 的屏幕列表翻译成 Qt-free 的 ScreenLayout。
 
-        用 self.screen() 而不是 primaryScreen()，多显示器下把宠物拖到副屏才不会
-        被硬拽回主屏。Qt6 默认 per-monitor DPI aware，这里一律用逻辑坐标。
+        用 availableGeometry 而不是 geometry：它排除了任务栏，
+        所以宠物会正好站在任务栏上沿而不是被任务栏盖住。
+        Qt6 默认 per-monitor DPI aware，这里一律用逻辑坐标。
         """
-        screen = self.screen() or QApplication.primaryScreen()
-        g = screen.availableGeometry()
-        return g.left(), g.top(), g.right() + 1, g.bottom() + 1
+        screens = QApplication.screens()
+        primary = QApplication.primaryScreen()
+        rects = []
+        for s in screens:
+            g = s.availableGeometry()
+            rects.append(Screen(g.left(), g.top(), g.right() + 1, g.bottom() + 1))
+        index = screens.index(primary) if primary in screens else 0
+        return ScreenLayout(rects, primary=index)
+
+    def _sync_layout(self) -> None:
+        """屏幕配置变了就重建布局。
+
+        用指纹比对而不是接 screenAdded / availableGeometryChanged 那一堆信号：
+        新插上来的屏还得记得给它也接一遍，漏一个就是一个静默的错误状态。
+        每帧比几个整数元组的开销可以忽略。
+        """
+        layout = self._read_layout()
+        signature = layout.signature()
+        if signature == self._layout_sig:
+            return
+        self._layout_sig = signature
+        self.brain.set_layout(layout)
 
 
 # --- Win32 --------------------------------------------------------------

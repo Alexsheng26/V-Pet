@@ -13,6 +13,8 @@ from __future__ import annotations
 import random
 from enum import Enum
 
+from .screens import ScreenLayout
+
 
 class Posture(str, Enum):
     """待机时手怎么放。
@@ -53,6 +55,9 @@ DIZZY_TIME = 1.8
 HAPPY_TIME = 2.2
 CLING_MARGIN = 20.0     # 松手时离墙这么近就挂上去
 CLING_MIN_HEIGHT = 30.0 # 离地太近就别挂了，直接落地更自然
+# 走过屏幕接缝时两侧地面的高度差：小于这个值直接迈上去，大于就是走下了个台阶，
+# 交给重力处理。分界值太小的话，两块屏差几像素也会触发一次没必要的下落。
+STEP_LIMIT = 12.0
 IDLE_RANGE = (1.2, 4.0)
 WALK_RANGE = (0.8, 2.5)
 CLING_RANGE = (6.0, 15.0)
@@ -66,9 +71,10 @@ CROSSED_IDLE_RANGE = (4.0, 7.5)
 class PetBrain:
     """位置 + 状态 + 状态转移。坐标是窗口左上角的屏幕逻辑坐标。"""
 
-    def __init__(self, size: int, bounds: tuple[int, int, int, int]) -> None:
+    def __init__(self, size: int, layout: ScreenLayout) -> None:
         self.size = size
-        self.set_bounds(bounds)
+        self.layout = layout
+        self.screen = layout.primary          # 当前站在哪块屏上
 
         self.x = float(self.left + (self.right - self.left - size) // 2)
         self.y = float(self.ground)
@@ -94,11 +100,46 @@ class PetBrain:
         self._prev_x = self.x
         self._prev_y = self.y
 
+    # --- 当前所在屏幕 ------------------------------------------------------
+    # 这几个值都是从"现在站在哪块屏上"推出来的，不再是构造时固定的字段。
+    # 走过接缝、被拖到副屏之后它们会跟着变。
+    @property
+    def left(self) -> int:
+        return self.layout.screens[self.screen].left
+
+    @property
+    def top(self) -> int:
+        return self.layout.screens[self.screen].top
+
+    @property
+    def right(self) -> int:
+        return self.layout.screens[self.screen].right
+
+    @property
+    def bottom(self) -> int:
+        return self.layout.screens[self.screen].bottom
+
+    @property
+    def ground(self) -> float:
+        return self.layout.ground(self.screen, self.size)
+
     # --- 外部输入 ---------------------------------------------------------
-    def set_bounds(self, bounds: tuple[int, int, int, int]) -> None:
-        """屏幕可用区域(已排除任务栏)。换显示器时重新调用。"""
-        self.left, self.top, self.right, self.bottom = bounds
-        self.ground = self.bottom - self.size
+    def set_layout(self, layout: ScreenLayout) -> None:
+        """屏幕配置变了（插拔显示器、改分辨率或缩放）时调用。
+
+        原来那块屏可能已经没了，所以要按当前位置重新认屏，
+        否则 self.screen 会是一个越界的下标。
+
+        认完屏还必须**把位置挪回来**。只改下标的话，宠物会停在一块已经不存在的
+        屏幕上；而它默认处在发呆状态，自己永远不会走回来 —— 表现就是拔掉副屏后
+        宠物再也找不着了，托盘图标却还在。
+        """
+        self.layout = layout
+        self.screen = layout.nearest_index(self.x + self.size / 2, self.y + self.size / 2)
+        low, high = layout.span(self.screen, self.size)
+        self.x = _clamp(self.x, low, high)
+        # 上界是 ground 而不是 bottom：下落中 y < ground，这里不会误伤
+        self.y = _clamp(self.y, float(self.top), self.ground)
 
     def set_pointer(self, x: float, y: float) -> None:
         self.pointer = (x, y)
@@ -116,18 +157,26 @@ class PetBrain:
         """松手。靠墙够近就挂上去，否则带着甩出去的速度掉下来。"""
         self.vx = _clamp(self.vx, -THROW_LIMIT, THROW_LIMIT)
         self.vy = _clamp(self.vy, -THROW_LIMIT, THROW_LIMIT)
+        # 可能被拖到了另一块屏，甚至拖进了两块屏之间的死区，先重新认屏
+        self.screen = self.layout.nearest_index(self.x + self.size / 2, self.y + self.size / 2)
 
         high_enough = self.y < self.ground - CLING_MIN_HEIGHT
-        if high_enough and self.x <= self.left + CLING_MARGIN:
+        # 只在**外侧**边缘挂住。两块屏之间的接缝不是墙 ——
+        # 挂在那儿等于吊在双屏桌面的正中间，很怪。
+        if high_enough and self.x <= self.left + CLING_MARGIN and self._wall(-1):
             self.x = float(self.left)
             self.facing = 1          # 背靠墙，脸朝屏幕内侧
             self._enter(State.CLING)
-        elif high_enough and self.x >= self.right - self.size - CLING_MARGIN:
+        elif high_enough and self.x >= self.right - self.size - CLING_MARGIN and self._wall(1):
             self.x = float(self.right - self.size)
             self.facing = -1
             self._enter(State.CLING)
         else:
             self._enter(State.FALL)
+
+    def _wall(self, direction: int) -> bool:
+        """这一侧是真正的墙（没有邻屏）吗。"""
+        return self.layout.neighbour(self.screen, direction) is None
 
     def head_pat(self) -> None:
         """摸头。正被拖着的时候不打断。"""
@@ -190,21 +239,64 @@ class PetBrain:
             self.vx = FOLLOW_SPEED if dx > 0 else -FOLLOW_SPEED
 
         self.x += self.vx * dt
+        self._resolve_edge(turn_around=dx is None)
+        if self.state is not State.WALK:
+            return                    # 走下了接缝处的台阶，已经切到 FALL 了
 
-        # 撞墙就掉头，而不是卡在边上。但追鼠标时不掉头 ——
-        # 否则鼠标停在屏幕外侧，宠物会贴着墙反复原地转身。
-        if self.x <= self.left:
-            self.x = float(self.left)
-            if dx is None:
-                self.vx = abs(self.vx)
-        elif self.x >= self.right - self.size:
-            self.x = float(self.right - self.size)
-            if dx is None:
-                self.vx = -abs(self.vx)
         self.facing = 1 if self.vx >= 0 else -1
-
         if dx is None and self.state_t >= self.next_switch:
             self._enter(State.IDLE)
+
+    def _resolve_edge(self, turn_around: bool) -> None:
+        """走到本屏边缘：能过去就过去，过不去才当墙。
+
+        换屏看的是宠物**中心**有没有越过接缝，而不是整个窗口有没有出本屏 ——
+        后者会让宠物在离边缘一个身位的地方就被拦下，永远走不到接缝。
+        跨越过程中窗口同时压在两块屏上，本来就该这样。
+
+        turn_around=False 是追鼠标的情况，撞墙不掉头 ——
+        否则鼠标停在屏幕外侧时，宠物会贴着墙反复原地转身。
+        """
+        if self._cross_seam():
+            return
+
+        # 只有没有邻屏的那一侧才是墙，这时才把整个窗口拦在本屏内
+        low, high = self.layout.span(self.screen, self.size)
+        if self.x < low and self._wall(-1):
+            self.x = low
+            if turn_around:
+                self.vx = abs(self.vx)
+        elif self.x > high and self._wall(1):
+            self.x = high
+            if turn_around:
+                self.vx = -abs(self.vx)
+
+    def _cross_seam(self) -> bool:
+        """中心越过接缝就换屏。返回是否发生了状态切换。"""
+        centre = self.x + self.size / 2
+        here = self.layout.screens[self.screen]
+        if centre < here.left:
+            return self._step_across(-1)
+        if centre >= here.right:
+            return self._step_across(1)
+        return False
+
+    def _step_across(self, direction: int) -> bool:
+        """跨过屏幕接缝。两侧地面不一样高时，往上是迈台阶，往下是踩空。
+
+        返回"是否切了状态"，而不是"是否换了屏" —— 调用方只关心还该不该继续
+        按 WALK 处理。换了屏但只是迈了个台阶的话，走路照常继续。
+        """
+        neighbour = self.layout.neighbour(self.screen, direction)
+        if neighbour is None:
+            return False
+        self.screen = neighbour
+        drop = self.ground - self.y          # 新地面更低 => 正数
+        if drop > STEP_LIMIT:
+            self._enter(State.FALL)          # 保留水平速度，走着走着掉下去
+            return True
+        self.y = self.ground                 # 台阶，直接迈上去
+        return False
 
     def _tick_drag(self, dt: float) -> None:
         # 位置由鼠标直接给，这里只反推速度，供松手时用。
@@ -221,10 +313,21 @@ class PetBrain:
         self.x += self.vx * dt
         self.y += self.vy * dt
 
-        if self.x <= self.left:
-            self.x, self.vx = float(self.left), -self.vx * BOUNCE
-        elif self.x >= self.right - self.size:
-            self.x, self.vx = float(self.right - self.size), -self.vx * BOUNCE
+        # 下落时的水平边界同理: 接缝可以飘过去，只有外侧边缘才反弹。
+        # 换屏同样以中心为准 —— 用窗口边缘的话会提前半个身位换屏，
+        # 地面高度跟着提前变，看起来像是空中被弹了一下。
+        centre = self.x + self.size / 2
+        here = self.layout.screens[self.screen]
+        if centre < here.left:
+            self._drift_across(-1)
+        elif centre >= here.right:
+            self._drift_across(1)
+
+        low, high = self.layout.span(self.screen, self.size)
+        if self.x < low and self._wall(-1):
+            self.x, self.vx = low, -self.vx * BOUNCE
+        elif self.x > high and self._wall(1):
+            self.x, self.vx = high, -self.vx * BOUNCE
         self.y = max(self.y, float(self.top))
 
         if self.y >= self.ground:
@@ -237,6 +340,14 @@ class PetBrain:
                 self.vx *= 0.8
             else:
                 self._enter(State.DIZZY if self._impact > DIZZY_SPEED else State.IDLE)
+
+    def _drift_across(self, direction: int) -> bool:
+        """下落途中飘过接缝。这里不动 y —— 它正在空中，地面由新屏决定。"""
+        neighbour = self.layout.neighbour(self.screen, direction)
+        if neighbour is None:
+            return False
+        self.screen = neighbour
+        return True
 
     def _tick_cling(self, dt: float) -> None:
         if self.state_t >= self.next_switch:
