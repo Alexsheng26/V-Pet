@@ -1,8 +1,8 @@
-# v-pet
+﻿# v-pet
 
 一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它摔懵，也可以贴到屏幕边上挂着。
 
-![state](https://img.shields.io/badge/status-v0.4-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-86-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
+![state](https://img.shields.io/badge/status-v0.5-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-86-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![状态与姿势对照](docs/states.png)
 
