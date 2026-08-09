@@ -170,13 +170,18 @@ jobs:
 
           # 附上和上一个 tag 之间的改动。发布页只有固定文案的话，
           # 看不出这一版到底改了什么 —— 尤其是补丁版本。
+          #
+          # 这里刻意用 echo 而不是 printf '\n...'：带反斜杠转义的字符串嵌在
+          # YAML 块标量里极容易被多剥一层，把 \n 变成真换行、直接撕坏 YAML 结构。
+          # echo 一行一句，没有任何转义，看着笨但不会错。
           previous=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
           if [ -n "$previous" ]; then
-            printf '
-## 相比 %s
-
-' "$previous" >> notes.md
-            git log --no-merges --pretty='- %s' "$previous..$GITHUB_REF_NAME" >> notes.md
+            {
+              echo ""
+              echo "## 相比 $previous"
+              echo ""
+              git log --no-merges --pretty='- %s' "$previous..$GITHUB_REF_NAME"
+            } >> notes.md
           fi
           cat notes.md
       - name: 建 Release
