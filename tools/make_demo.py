@@ -17,6 +17,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tools import use_utf8_stdio                                         # noqa: E402
+
+use_utf8_stdio()
+
 from PySide6.QtCore import QRectF, Qt                                    # noqa: E402
 from PySide6.QtGui import (                                             # noqa: E402
     QColor, QFont, QGuiApplication, QImage, QLinearGradient, QPainter,

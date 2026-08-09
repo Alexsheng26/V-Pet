@@ -21,6 +21,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from tools import use_utf8_stdio  # noqa: E402
+
+use_utf8_stdio()
+
 DIST = ROOT / "dist" / "v-pet"
 ICON = ROOT / "docs" / "v-pet.ico"
 

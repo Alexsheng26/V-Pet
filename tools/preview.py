@@ -15,6 +15,10 @@ from pathlib import Path
 # 全会渲染成豆腐块。反正这是本机看图用的工具，用正常平台即可。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tools import use_utf8_stdio  # noqa: E402
+
+use_utf8_stdio()
+
 from PySide6.QtCore import QRectF, Qt                      # noqa: E402
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QImage, QPainter  # noqa: E402
 
