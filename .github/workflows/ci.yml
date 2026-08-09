@@ -136,6 +136,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 默认只拉一个 commit、且不带 tag，下面的 git describe / git log 会拿不到东西
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: v-pet-windows-x64
@@ -164,6 +167,18 @@ jobs:
           把 PNG 按 `sprites/{idle,walk,drag,fall,sleep,happy,cling,dizzy,curious}/00.png`
           丢进 exe 旁边的 `sprites/` 目录，程序会自动使用，一行代码都不用改。
           EOF
+
+          # 附上和上一个 tag 之间的改动。发布页只有固定文案的话，
+          # 看不出这一版到底改了什么 —— 尤其是补丁版本。
+          previous=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -n "$previous" ]; then
+            printf '
+## 相比 %s
+
+' "$previous" >> notes.md
+            git log --no-merges --pretty='- %s' "$previous..$GITHUB_REF_NAME" >> notes.md
+          fi
+          cat notes.md
       - name: 建 Release
         # 用 gh CLI 而不是第三方 action：少一个供应链依赖，runner 上本来就装了 gh。
         # 不跟 --generate-notes 混用 —— 两个 notes 来源同时给的行为没有明确保证。
