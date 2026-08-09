@@ -95,7 +95,21 @@ jobs:
       - name: 打包并自检
         # --no-window-check：runner 上真开一个置顶窗口需要可交互桌面会话，
         # 是最容易因环境而非代码挂掉的一步；它验的东西 --selftest 都覆盖了。
-        run: python tools/build.py --no-window-check
+        #
+        # 失败时把日志尾部写进 ::error:: 注解。Actions 的**日志**端点要鉴权，
+        # 而**注解**对公开仓库是可读的 —— 于是排查时不必非得开浏览器翻日志。
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "build.log"
+          python tools/build.py --no-window-check *> $log
+          $code = $LASTEXITCODE
+          Get-Content $log
+          if ($code -ne 0) {
+            $tail = ((Get-Content $log -Tail 30) -join ' // ')
+            if ($tail.Length -gt 3000) { $tail = $tail.Substring($tail.Length - 3000) }
+            Write-Host "::error title=build.py exit $code::$tail"
+            exit 1
+          }
       - name: 文档生成器还能跑吗
         # make_demo 自带断言：所有状态都要在动图里出现、落地冲击要真的越过摔懵阈值，
         # 否则退出码非零。等于顺手把物理参数的回归也挡住了。
