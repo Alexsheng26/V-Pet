@@ -3,6 +3,7 @@
 **一只住在你任务栏上的 Windows 桌面宠物。** 无边框、置顶、逐像素透明，
 能抓起来甩出去、贴到屏幕边上挂着、走过双屏之间的接缝。64 MB 免安装，冷启动 1.2 秒。
 
+[![CI](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml)
 ![status](https://img.shields.io/badge/status-v0.7-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-129-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![演示](docs/demo.gif)
@@ -321,6 +322,31 @@ PySide6 的 hook 是整包拷 DLL 的，排掉 `PySide6.QtQml` 并不会让 `Qt6
 ```bash
 python -m unittest discover
 ```
+
+## CI
+
+`.github/workflows/ci.yml`，每次 push 和 PR 都跑。
+
+| Job | 干什么 |
+|---|---|
+| **架构守卫** | Linux，**故意不装 PySide6**，跑那 84 个不依赖 Qt 的测试 |
+| **测试** | Windows × Python 3.10 / 3.13 / 3.14，全部 129 个测试 + 源码模式自检 |
+| **打包** | 出 exe、跑 `--selftest`、重新生成演示动图、上传 zip 制品 |
+| **发布** | 只在推 `v*` 标签时触发，把 zip 挂上 GitHub Release |
+
+**"架构守卫"那个 job 不是"顺便在 Linux 上也跑一遍"。** README 里反复声称
+`state.py` / `screens.py` / `config.py` 不依赖 Qt、不依赖 Windows —— 这种声称
+如果只靠自觉，迟早会在某次"就 import 一下 `QPoint` 很方便"里破掉，
+而且在 Windows 上跑全套测试是**发现不了**的。所以那个 job 刻意不装 PySide6，
+还会先断言环境里确实没有它（装了就直接报错，免得这道守卫悄悄失效）。
+129 个测试里有 84 个能在这种环境下跑通，这个数字本身就是分层是否真的成立的度量。
+
+打包那步会顺手重跑 `tools/make_demo.py`。它自带断言 —— 所有状态都要在动图里
+出现过、落地冲击要真的越过摔懵阈值 —— 于是物理参数的回归也被这条流水线挡住了。
+
+`--no-window-check` 让 CI 跳过"真开一个置顶窗口看它活不活得过 6 秒"那一步：
+那需要可交互的桌面会话，是整条流水线里最容易因**环境**而不是因代码挂掉的一环，
+而它验的东西 `--selftest` 已经覆盖了（构造窗口、建托盘、调 Win32）。
 
 ## 后续
 

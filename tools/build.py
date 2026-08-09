@@ -60,6 +60,13 @@ def main() -> int:
     if check.returncode != 0:
         return 1
 
+    # CI 上跳过这一段：真开一个置顶窗口需要可交互的桌面会话，是整条流水线里
+    # 最容易因环境而不是因代码挂掉的一步。而它验的东西 --selftest 已经覆盖了
+    # （构造 PetWindow、建托盘、调 Win32），留在本地当最后一道人眼确认。
+    if "--no-window-check" in sys.argv:
+        print("冷启动   已跳过（--no-window-check）")
+        return 0
+
     started = time.perf_counter()
     proc = subprocess.Popen([str(exe)], cwd=DIST)
     time.sleep(6)

@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一个分支上只跑最新的一次，旧的直接取消
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    # 这个 job 不是"顺便在 Linux 上也跑一遍"，而是一道**架构守卫**：
+    # state.py / screens.py / config.py 声称不依赖 Qt，也不依赖 Windows。
+    # 这里刻意**不安装 PySide6**、在 Linux 上跑它们的测试 ——
+    # 哪天有人往行为层里 import 了一个 QPoint，这个 job 会立刻红，
+    # 而在 Windows 上跑全套是发现不了的。
+    name: 架构守卫 · 行为层不依赖 Qt (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 确认环境里真的没有 PySide6
+        run: |
+          if python -c "import PySide6" 2>/dev/null; then
+            echo "::error::环境里装了 PySide6，这个 job 就失去意义了"
+            exit 1
+          fi
+          echo "没有 PySide6 ✓"
+      - name: 跑不依赖 Qt 的那 84 个测试
+        run: python -m unittest tests.test_brain tests.test_screens tests.test_config -v
+
+  test:
+    name: 测试 · Windows · Python ${{ matrix.python }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 是 README 承诺的下限，3.14 是开发用的版本。
+        # PySide6 6.11 的约束是 >=3.10,<3.15。
+        python: ["3.10", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: 全部测试
+        # offscreen 平台不需要桌面会话。测试里也各自 setdefault 了，
+        # 这里再显式设一遍，免得将来新增的测试忘了设就在 CI 上挂掉。
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -v
+      - name: 源码模式自检（渲一遍所有状态）
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python main.py --selftest
+
+  build:
+    name: 打包
+    needs: [portable, test]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: 打包并自检
+        # --no-window-check：runner 上真开一个置顶窗口需要可交互桌面会话，
+        # 是最容易因环境而非代码挂掉的一步；它验的东西 --selftest 都覆盖了。
+        run: python tools/build.py --no-window-check
+      - name: 文档生成器还能跑吗
+        # make_demo 自带断言：所有状态都要在动图里出现、落地冲击要真的越过摔懵阈值，
+        # 否则退出码非零。等于顺手把物理参数的回归也挡住了。
+        run: python tools/make_demo.py "${{ runner.temp }}/demo.gif"
+      - name: 压成 zip
+        run: Compress-Archive -Path dist/v-pet/* -DestinationPath v-pet-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v-pet-windows-x64
+          path: v-pet-windows-x64.zip
+          retention-days: 30
+
+  release:
+    name: 发布
+    # 只有推 v* 标签才发版，日常 push 到此为止
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: v-pet-windows-x64
+      - name: 写发布说明
+        run: |
+          cat > notes.md <<'EOF'
+          解压后双击 `v-pet.exe` 即可，目标机器不需要装 Python。
+
+          想换皮：把 PNG 按 `sprites/{idle,walk,drag,fall,sleep,happy,cling,dizzy}/00.png`
+          丢进 exe 旁边的 `sprites/` 目录，程序会自动使用，一行代码都不用改。
+          EOF
+      - name: 建 Release
+        # 用 gh CLI 而不是第三方 action：少一个供应链依赖，runner 上本来就装了 gh。
+        # 不跟 --generate-notes 混用 —— 两个 notes 来源同时给的行为没有明确保证。
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" v-pet-windows-x64.zip
+          --title "v-pet $GITHUB_REF_NAME"
+          --notes-file notes.md
