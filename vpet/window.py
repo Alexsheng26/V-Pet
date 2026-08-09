@@ -32,8 +32,9 @@ from PySide6.QtCore import QElapsedTimer, QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
-from . import autostart
+from . import autostart, desktop
 from .config import SIZE_CHOICES, Config
+from .ledges import Ledge, LedgeSet
 from .screens import Screen, ScreenLayout
 from .state import PetBrain, State
 
@@ -42,6 +43,9 @@ MAX_DT = 0.05            # 卡顿后别让宠物瞬移
 ALPHA_HIT = 24           # alpha 低于这个值就算"不是宠物身体"
 RUB_TRIGGER = 300.0      # 在宠物身上累计搓够这么多像素算摸头
 RUB_DECAY = 0.92         # 每帧衰减: 慢慢划过去不算，得来回搓才攒得起来
+# 窗口台面的刷新间隔。实测枚举一次 0.2ms，每帧做也不至于卡，但没必要；
+# 100ms 已经足够让宠物跟上被拖动的窗口，肉眼看不出延迟。
+LEDGE_REFRESH_MS = 100
 
 _IS_WINDOWS = sys.platform == "win32"
 _GWL_EXSTYLE = -20
@@ -78,9 +82,12 @@ class PetWindow(QWidget):
         self._grab_offset = QPoint()
         self._dragging = False
         self._click_through = False
-        self._hwnd = 0
+        self._hwnd_cache = 0
         self._rub = 0.0
         self._last_cursor = QCursor.pos()
+        self._ledge_sig: tuple | None = None
+        self._ledge_clock = QElapsedTimer()
+        self._ledge_clock.start()
 
         self._build_actions()
         self._build_tray()
@@ -100,6 +107,9 @@ class PetWindow(QWidget):
         cursor = QCursor.pos()
 
         self._sync_layout()
+        if self._ledge_clock.elapsed() >= LEDGE_REFRESH_MS:
+            self._ledge_clock.restart()
+            self._sync_ledges()
         self.brain.set_pointer(float(cursor.x()), float(cursor.y()))
         self.brain.update(dt)
         self.move(round(self.brain.x), round(self.brain.y))
@@ -151,11 +161,9 @@ class PetWindow(QWidget):
         # 非 Windows 平台直接跳过: 宁可不穿透，也不要炸掉
         if not _IS_WINDOWS or enable == self._click_through:
             return
-        if not self._hwnd:
-            self._hwnd = int(self.winId())
-        ex = _get_window_long(self._hwnd, _GWL_EXSTYLE)
+        ex = _get_window_long(self._hwnd(), _GWL_EXSTYLE)
         ex = ex | _WS_EX_TRANSPARENT if enable else ex & ~_WS_EX_TRANSPARENT
-        _set_window_long(self._hwnd, _GWL_EXSTYLE, ex)
+        _set_window_long(self._hwnd(), _GWL_EXSTYLE, ex)
         self._click_through = enable
 
     # --- 鼠标 -------------------------------------------------------------
@@ -177,6 +185,9 @@ class PetWindow(QWidget):
         if event.button() != Qt.LeftButton or not self._dragging:
             return
         self._dragging = False
+        # 图标只在松手这一刻查一次(1.6ms)，不进每帧循环
+        if self._dropped_on_icon():
+            self.brain.notice_on_landing()
         self.brain.release()
 
     def mouseDoubleClickEvent(self, event) -> None:
@@ -313,6 +324,51 @@ class PetWindow(QWidget):
         else:
             self.show()
             self._toggle_action.setText("藏起来")
+
+    # --- 桌面 -------------------------------------------------------------
+    def _hwnd(self) -> int:
+        if not self._hwnd_cache:
+            self._hwnd_cache = int(self.winId())
+        return self._hwnd_cache
+
+    def _to_logical(self, value: float) -> int:
+        """物理像素 -> Qt 逻辑像素。
+
+        Win32 给的是设备像素，窗口层用的是逻辑像素。这里用**当前屏幕**的缩放比例，
+        在混合 DPI 的多屏环境下，另一块屏上的台面位置会有偏差 ——
+        真要做对得逐显示器换算原点，代价远大于收益，先记在这儿。
+        """
+        return round(value / self.devicePixelRatioF())
+
+    def _sync_ledges(self) -> None:
+        """把可见窗口的上沿变成宠物能站的台面。"""
+        ledges = LedgeSet(
+            Ledge(self._to_logical(l.left), self._to_logical(l.right),
+                  self._to_logical(l.y), l.key)
+            for l in desktop.window_ledges(skip=self._hwnd())
+        )
+        signature = ledges.signature()
+        if signature == self._ledge_sig:
+            return
+        self._ledge_sig = signature
+        self.brain.set_ledges(ledges)
+
+    def _dropped_on_icon(self) -> bool:
+        """松手时脚底是不是正落在某个桌面图标上。
+
+        用脚底一个点判定，不是整个窗口矩形 —— 宠物有 144px 宽，
+        用矩形相交的话在图标区附近几乎总是命中，反应就不值钱了。
+
+        没有检查图标是不是被别的窗口挡住了：真做要 WindowFromPoint 再排除
+        自己这个置顶窗口，判断链条比这个功能本身还长，不划算。
+        """
+        dpr = self.devicePixelRatioF()
+        feet_x = self.brain.x + self.width() / 2
+        feet_y = self.brain.y + self.height() - 6
+        for left, top, right, bottom in desktop.desktop_icons():
+            if (left / dpr <= feet_x < right / dpr) and (top / dpr <= feet_y < bottom / dpr):
+                return True
+        return False
 
     # --- 屏幕 -------------------------------------------------------------
     def _read_layout(self) -> ScreenLayout:

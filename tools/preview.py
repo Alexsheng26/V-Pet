@@ -38,6 +38,7 @@ CELLS = [
     ("happy  摸头 / 双击", State.HAPPY, R),
     ("cling  贴边挂住", State.CLING, R),
     ("dizzy  摔懵了", State.DIZZY, R),
+    ("curious  放到桌面图标上", State.CURIOUS, R),
 ]
 FRAMES = (0.35, 0.90, 1.45)     # 取三个时间点，看得出在动
 COLS = 3

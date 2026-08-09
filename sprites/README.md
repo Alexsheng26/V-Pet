@@ -10,11 +10,15 @@ sprites/
   drag/
   fall/
   sleep/
+  happy/
+  cling/
+  dizzy/
+  curious/
 ```
 
 约定：
 
-- 目录名 = `vpet/state.py` 里 `State` 枚举的值：`idle` / `walk` / `drag` / `fall` / `sleep`
+- 目录名 = `vpet/state.py` 里 `State` 枚举的值：`idle` / `walk` / `drag` / `fall` / `sleep` / `happy` / `cling` / `dizzy` / `curious`
 - **文件名排序就是帧序**，所以用 `00 01 02` 这样补零的两位数，别用 `1 2 10`
 - 带 alpha 通道的 PNG。透明区域是真透明 —— 不用抠色，也别留白底
 - 所有帧同尺寸，正方形，建议 108×108 或它的整数倍

@@ -21,6 +21,11 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from vpet.render import PET_SIZE, BlobPet, pose_for  # noqa: E402
 from vpet.state import Posture, State  # noqa: E402
 
+def _sign_changes(values: list[float]) -> int:
+    """摆动快慢用"左右各摆了几次"衡量，比直接比频率常数更贴近肉眼看到的东西。"""
+    return sum(1 for a, b in zip(values, values[1:]) if (a >= 0) != (b >= 0))
+
+
 _app: QApplication | None = None
 
 
@@ -120,9 +125,17 @@ class TestStates(unittest.TestCase):
                 self.assertFalse(img.isNull(), f"{state.value} @t={t}")
                 self.assertIsNotNone(logical_bbox(img), f"{state.value} @t={t} 画了个空的")
 
-    def test_only_cling_and_dizzy_tilt(self):
-        upright = {s for s in State if pose_for(s, 0.9, 1).rot == 0.0}
-        self.assertEqual(upright, set(State) - {State.CLING, State.DIZZY})
+    def test_only_the_states_that_should_tilt_do(self):
+        """歪着的状态就这三个。走路/发呆歪了会像喝多了。"""
+        tilting = {s for s in State if pose_for(s, 0.9, 1).rot != 0.0}
+        self.assertEqual(tilting, {State.CLING, State.DIZZY, State.CURIOUS})
+
+    def test_curious_tilts_much_slower_than_dizzy(self):
+        """两个都是歪头，靠摆动快慢区分 —— 好奇是慢慢歪，摔懵是高频抖。"""
+        curious = [pose_for(State.CURIOUS, t / 50, 1).rot for t in range(200)]   # 4 秒
+        dizzy = [pose_for(State.DIZZY, t / 50, 1).rot for t in range(200)]
+        self.assertLess(_sign_changes(curious) * 2, _sign_changes(dizzy),
+                        "两个状态的摆动频率太接近，看着会像同一个")
 
     def test_crossed_posture_actually_looks_different(self):
         pet = BlobPet()

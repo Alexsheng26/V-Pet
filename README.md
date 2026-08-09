@@ -4,7 +4,7 @@
 能抓起来甩出去、贴到屏幕边上挂着、走过双屏之间的接缝。64 MB 免安装，冷启动 1.2 秒。
 
 [![CI](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml)
-![status](https://img.shields.io/badge/status-v0.7-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-129-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
+![status](https://img.shields.io/badge/status-v0.8-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-152-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![演示](docs/demo.gif)
 
@@ -66,6 +66,8 @@ python main.py
 | 双击 / 在它身上来回搓 | 摸头，眯眼冒爱心 |
 | 右键 → 跟着鼠标 | 追着光标跑；追上就停下，不会在原地抖 |
 | 什么都不干 | 每次停下来有 45% 的概率抱起手，抱着手会站得更久 |
+| 把它扔到窗口上方 | 站在窗口标题栏上溜达。窗口挪动它跟着走，窗口关掉它掉下来 |
+| 拖到桌面图标上松手 | 落地后歪头打量，冒个问号 |
 | 放着不管 30 秒 | 睡着，冒 z；点一下就醒 |
 | 右键 / 托盘 → 大小 | 96 / 120 / 144 / 176 / 208 px，即时生效 |
 | 右键 / 托盘 → 开机自启 | 默认关。勾上才会写 HKCU 的 Run 键 |
@@ -150,7 +152,36 @@ Qt 只能整个窗口开关 `WA_TransparentForMouseEvents`，做不到按像素�
 新插上来的屏还得记得给它也接一遍，漏一个就是一个静默的错误状态。
 每帧比几个整数元组的开销可以忽略。
 
-### 6. 退出路径要先于一切
+### 6. 从桌面上读东西，三个不查文档就会踩的点
+
+宠物能站在窗口标题栏上，也能认出脚下的桌面图标。这两件事都要问 Windows 要数据，
+`desktop.py` 里每个坑都写了注释：
+
+**窗口矩形要用 `DwmGetWindowAttribute(EXTENDED_FRAME_BOUNDS)`，不能用 `GetWindowRect`。**
+后者含 Aero 的不可见投影边框，左右各多出七八个像素 —— 宠物会站在离窗口可见边缘
+一段距离的空气上，肉眼一眼就能看出来。
+
+**`IsWindowVisible` 挡不住 UWP 的幽灵窗口。** 它们"可见"但被 DWM 隐藏着，
+只有 `DWMWA_CLOAKED` 属性能识别。不查这个的话，桌面上会凭空出现一排踩不到实物的台面 ——
+实测本机 8 个可见顶层窗口里有 6 个是这种。
+
+**桌面图标属于 explorer.exe，`LVM_GETITEMRECT` 要求把结果写进对方进程的地址空间。**
+传本进程的指针只会拿到一堆零。所以得 `OpenProcess` + `VirtualAllocEx` 到 explorer 里
+分配一块内存、发消息、再 `ReadProcessMemory` 读回来。拿不到就返回空列表 ——
+这只是个锦上添花的功能，不值得让宠物崩掉。
+
+另外两条判断是实测调出来的：
+
+- **最大化窗口的上沿在 y=0，站上去整只都在屏幕外。** 所以台面查询带一个"天花板"
+  参数，把"站上去放不下"的排掉。
+- **窗口移动时按句柄认、不按位置认。** 第一版还要求宠物仍落在新位置的范围内，
+  结果慢慢拖窗口没事、但 `Win+←` 这种一次挪半个屏的吸附会让宠物掉下去。
+  站在窗口上的东西挪多远都该跟着走，位移直接补给宠物。
+
+刷新频率是量出来的：枚举窗口 0.2ms，所以每 100ms 轮询一次；枚举图标 1.6ms
+（约 10% 帧预算），所以**只在松手那一刻查一次**，不进每帧循环。
+
+### 7. 退出路径要先于一切
 
 无边框窗口没有关闭按钮。托盘菜单和 Esc 是在写第一行渲染代码之前接上的，
 否则很容易做出一个只能开任务管理器杀掉的窗口。
@@ -165,6 +196,8 @@ vpet/window.py     窗口：透明、置顶、拖拽、点击穿透、托盘、�
 vpet/config.py     配置读写。不 import Qt
 vpet/autostart.py  开机自启（HKCU 的 Run 键）
 vpet/screens.py    多屏几何：接缝、死区、相邻判定。不 import Qt
+vpet/ledges.py     可站的台面：落点、跟随移动。不 import Qt
+vpet/desktop.py    Win32：枚举窗口上沿和桌面图标
 vpet/paths.py      程序目录解析（打包后 __file__ 不再指向仓库）
 tools/preview.py   生成状态对照图
 tools/make_icon.py 从角色渲染多尺寸 .ico
@@ -172,7 +205,7 @@ tools/gif.py       手写的 GIF89a 编码器（调色板 + LZW + 帧间差分�
 tools/make_demo.py 驱动真实 PetBrain 录出 README 的演示动图
 tools/build.py     打包 + 自检
 v-pet.spec         PyInstaller 配置（手写的，要提交）
-tests/             129 个测试，用 offscreen 平台跑，不需要显示器
+tests/             152 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
@@ -189,7 +222,7 @@ tests/             129 个测试，用 offscreen 平台跑，不需要显示器
 
 ```
 sprites/
-  idle/  walk/  drag/  fall/  sleep/  happy/  cling/  dizzy/
+  idle/  walk/  drag/  fall/  sleep/  happy/  cling/  dizzy/  curious/
 ```
 
 丢进去就自动换皮，一行代码不用改；缺哪个状态就自动退回 `idle`，可以一个状态一个状态地补。
@@ -359,6 +392,7 @@ git tag v0.7 && git push origin v0.7
 - [x] 配置持久化（位置、大小、跟随开关、开机自启）
 - [x] 抱手待机姿势
 - [x] 多显示器：跨屏行走、接缝台阶、死区、拔屏恢复
+- [x] 沿窗口边缘走 · 拖到桌面图标上有反应
 - [x] 打包成免安装 exe
 
 ## 兼容性

@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 from enum import Enum
 
+from .ledges import Ledge, LedgeSet
 from .screens import ScreenLayout
 
 
@@ -39,6 +40,7 @@ class State(str, Enum):
     HAPPY = "happy"     # 被摸头
     CLING = "cling"     # 挂在屏幕边上
     DIZZY = "dizzy"     # 摔懵了
+    CURIOUS = "curious" # 被放到了桌面图标上，正在打量它
 
 
 # --- 手感参数，都在这儿调 ---------------------------------------------------
@@ -53,6 +55,7 @@ SLEEP_AFTER = 30.0      # 连续没被打扰多久开始打瞌睡(秒)
 DIZZY_SPEED = 1100.0    # 落地冲击超过这个值会摔懵
 DIZZY_TIME = 1.8
 HAPPY_TIME = 2.2
+CURIOUS_TIME = 2.0
 CLING_MARGIN = 20.0     # 松手时离墙这么近就挂上去
 CLING_MIN_HEIGHT = 30.0 # 离地太近就别挂了，直接落地更自然
 # 走过屏幕接缝时两侧地面的高度差：小于这个值直接迈上去，大于就是走下了个台阶，
@@ -75,6 +78,9 @@ class PetBrain:
         self.size = size
         self.layout = layout
         self.screen = layout.primary          # 当前站在哪块屏上
+        self.ledges = LedgeSet()
+        # 当前踩着的窗口上沿；None = 站在屏幕地面（任务栏上沿）
+        self.support: Ledge | None = None
 
         self.x = float(self.left + (self.right - self.left - size) // 2)
         self.y = float(self.ground)
@@ -97,6 +103,7 @@ class PetBrain:
 
         self.next_switch = random.uniform(*IDLE_RANGE)
         self._impact = 0.0       # 这轮下落的最大落地冲击，用来判定摔懵
+        self._pending_notice = False   # 落地后要不要打量脚下的桌面图标
         self._prev_x = self.x
         self._prev_y = self.y
 
@@ -120,8 +127,15 @@ class PetBrain:
         return self.layout.screens[self.screen].bottom
 
     @property
-    def ground(self) -> float:
+    def screen_ground(self) -> float:
         return self.layout.ground(self.screen, self.size)
+
+    @property
+    def ground(self) -> float:
+        """脚下那一层的高度。踩着窗口时是窗口上沿，否则是任务栏上沿。"""
+        if self.support is not None:
+            return float(self.support.y - self.size)
+        return self.screen_ground
 
     # --- 外部输入 ---------------------------------------------------------
     def set_layout(self, layout: ScreenLayout) -> None:
@@ -141,11 +155,44 @@ class PetBrain:
         # 上界是 ground 而不是 bottom：下落中 y < ground，这里不会误伤
         self.y = _clamp(self.y, float(self.top), self.ground)
 
+    def set_ledges(self, ledges: LedgeSet) -> None:
+        """刷新可站的台面。窗口开关和移动都走这里。"""
+        self.ledges = ledges
+        if self.support is None:
+            return
+
+        settled = self.state in (State.IDLE, State.WALK, State.SLEEP)
+        refreshed = ledges.refresh(self.support)
+        if refreshed is None:
+            self.support = None
+            if settled:
+                self._enter(State.FALL)      # 脚下那扇窗关掉了 / 最小化了
+            return
+
+        shift = refreshed.left - self.support.left
+        self.support = refreshed
+        if settled:
+            # 跟着窗口平移，保持在窗口上的相对位置。只把 y 对齐、不管 x 的话，
+            # 窗口一横移宠物就留在原地了 —— 站在桌上的东西不会这样。
+            self.x = _clamp(
+                self.x + shift, float(refreshed.left), float(refreshed.right - self.size)
+            )
+            self.y = self.ground
+
     def set_pointer(self, x: float, y: float) -> None:
         self.pointer = (x, y)
 
+    def notice_on_landing(self) -> None:
+        """告诉宠物"你被放到某个桌面图标上了"。
+
+        不立刻切状态：松手时它还在半空，得先落下去。落地那一刻才打量图标，
+        顺序才对。摔得很重的话由摔懵优先 —— 撞晕了顾不上好奇。
+        """
+        self._pending_notice = True
+
     def grab(self) -> None:
         self._enter(State.DRAG)
+        self._pending_notice = False          # 重新抓起来，上一次的意图作废
         self.undisturbed = 0.0
         self.vx = self.vy = 0.0
         self._prev_x, self._prev_y = self.x, self.y
@@ -215,7 +262,7 @@ class PetBrain:
             self._tick_fall(dt)
         elif self.state is State.CLING:
             self._tick_cling(dt)
-        elif self.state in (State.HAPPY, State.DIZZY):
+        elif self.state in (State.HAPPY, State.DIZZY, State.CURIOUS):
             self._tick_timed(dt)
         # SLEEP 不用 tick，等外部 wake()
 
@@ -257,6 +304,21 @@ class PetBrain:
         turn_around=False 是追鼠标的情况，撞墙不掉头 ——
         否则鼠标停在屏幕外侧时，宠物会贴着墙反复原地转身。
         """
+        if self.support is not None:
+            # 站在窗口上：台面两端就是边界。走到头掉头而不是掉下去 ——
+            # 掉下去更"真实"，但实际用起来是宠物一直在往下摔，很吵。
+            low = float(self.support.left)
+            high = float(self.support.right - self.size)
+            if self.x < low:
+                self.x = low
+                if turn_around:
+                    self.vx = abs(self.vx)
+            elif self.x > high:
+                self.x = high
+                if turn_around:
+                    self.vx = -abs(self.vx)
+            return
+
         if self._cross_seam():
             return
 
@@ -308,7 +370,23 @@ class PetBrain:
         if abs(self.vx) > 5:
             self.facing = 1 if self.vx > 0 else -1
 
+    def _landing_surface(self) -> Ledge | None:
+        """这一步会踩到的台面；None 表示会一路落到屏幕地面。
+
+        必须在**移动之前**算：等 y 更新完再找的话，脚底已经穿过台面了，
+        那条台面就不再满足"在脚底下方"，宠物会直接穿过去。
+        """
+        ledge = self.ledges.landing_below(
+            self.x + self.size / 2,
+            self.y + self.size,
+            ceiling=float(self.top + self.size),   # 站上去要放得下整只
+        )
+        if ledge is None or ledge.y - self.size > self.screen_ground:
+            return None                       # 比任务栏还低的台面没有意义
+        return ledge
+
     def _tick_fall(self, dt: float) -> None:
+        surface = self._landing_surface()
         self.vy += GRAVITY * dt
         self.x += self.vx * dt
         self.y += self.vy * dt
@@ -330,8 +408,10 @@ class PetBrain:
             self.x, self.vx = high, -self.vx * BOUNCE
         self.y = max(self.y, float(self.top))
 
-        if self.y >= self.ground:
-            self.y = float(self.ground)
+        ground = float(surface.y - self.size) if surface else self.screen_ground
+        if self.y >= ground:
+            self.y = ground
+            self.support = surface
             # 记的是**第一次**触地的冲击。后面每次反弹都更轻，
             # 等落稳时 vy 已经很小了，那时候再判定就永远不会懵。
             self._impact = max(self._impact, self.vy)
@@ -339,7 +419,13 @@ class PetBrain:
                 self.vy = -self.vy * BOUNCE   # 还有劲，弹一下
                 self.vx *= 0.8
             else:
-                self._enter(State.DIZZY if self._impact > DIZZY_SPEED else State.IDLE)
+                notice, self._pending_notice = self._pending_notice, False
+                if self._impact > DIZZY_SPEED:
+                    self._enter(State.DIZZY)  # 撞晕了就顾不上好奇了
+                elif notice:
+                    self._enter(State.CURIOUS)
+                else:
+                    self._enter(State.IDLE)
 
     def _drift_across(self, direction: int) -> bool:
         """下落途中飘过接缝。这里不动 y —— 它正在空中，地面由新屏决定。"""
@@ -355,7 +441,8 @@ class PetBrain:
             self._enter(State.FALL)
 
     def _tick_timed(self, dt: float) -> None:
-        limit = HAPPY_TIME if self.state is State.HAPPY else DIZZY_TIME
+        limit = {State.HAPPY: HAPPY_TIME, State.DIZZY: DIZZY_TIME,
+                 State.CURIOUS: CURIOUS_TIME}[self.state]
         if self.state_t >= limit:
             self._enter(State.IDLE)
 
@@ -366,6 +453,8 @@ class PetBrain:
         # 除了发呆，其它状态手都有正事要干 —— 走路要摆、被抓要扬、贴墙要抓着，
         # 所以默认先把姿势清回垂手，只有 IDLE 分支才可能改成抱手。
         self.posture = Posture.RELAXED
+        if state in (State.DRAG, State.FALL, State.CLING):
+            self.support = None               # 已经离开台面了，落点重新找
 
         if state is State.IDLE:
             self.vx = self.vy = 0.0
@@ -394,7 +483,7 @@ class PetBrain:
         elif state is State.CLING:
             self.vx = self.vy = 0.0
             self.next_switch = random.uniform(*CLING_RANGE)
-        elif state in (State.SLEEP, State.HAPPY, State.DIZZY):
+        elif state in (State.SLEEP, State.HAPPY, State.DIZZY, State.CURIOUS):
             self.vx = self.vy = 0.0
             if state is State.SLEEP:
                 self.undisturbed = 0.0

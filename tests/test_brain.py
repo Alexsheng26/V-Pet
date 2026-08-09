@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import unittest
 
+from vpet.ledges import Ledge, LedgeSet
 from vpet.screens import ScreenLayout, layout_from_rects
 from vpet.state import (
     CLING_MARGIN,
@@ -386,6 +387,95 @@ class TestMultipleScreens(unittest.TestCase):
         b = brain()
         self.assertIsNone(b.layout.neighbour(0, 1))
         self.assertIsNone(b.layout.neighbour(0, -1))
+
+
+class TestLedges(unittest.TestCase):
+    """站在窗口上沿。任务栏不再是唯一的地面。"""
+
+    WINDOW = Ledge(200, 700, 400, key=42)      # 上沿 y=400 的一扇窗
+
+    def on_window(self) -> PetBrain:
+        b = brain()
+        b.set_ledges(LedgeSet([self.WINDOW]))
+        return b
+
+    def test_falls_onto_a_window_instead_of_the_floor(self):
+        b = self.on_window()
+        b.x, b.y = 400.0, 50.0
+        b._enter(State.FALL)
+        run(b, 5.0, until=State.IDLE)
+        self.assertIsNotNone(b.support, "没踩到窗口")
+        self.assertEqual(b.y, self.WINDOW.y - SIZE)
+
+    def test_misses_the_window_when_not_above_it(self):
+        b = self.on_window()
+        b.x, b.y = 20.0, 50.0                  # 窗口左边以外
+        b._enter(State.FALL)
+        run(b, 5.0, until=State.IDLE)
+        self.assertIsNone(b.support)
+        self.assertEqual(b.y, GROUND)
+
+    def test_turns_around_at_the_edge_of_the_window(self):
+        b = self.on_window()
+        b.support = self.WINDOW
+        b.y = b.ground
+        b._enter(State.WALK)
+        b.next_switch, b.vx = 99.0, abs(b.vx)
+        b.x = float(self.WINDOW.right - SIZE - 2)
+        run(b, 1.0)
+        self.assertLessEqual(b.x, self.WINDOW.right - SIZE)
+        self.assertIsNotNone(b.support, "掉头就好，不该掉下去")
+
+    def test_rides_a_window_that_moves(self):
+        """窗口被拖着走时宠物跟着台面一起动 —— 站在窗口上就该是这样。"""
+        b = self.on_window()
+        b.support = self.WINDOW
+        b.x, b.y = 400.0, b.ground
+        b.set_ledges(LedgeSet([Ledge(260, 760, 350, key=42)]))   # 右移 60，上移 50
+        self.assertEqual(b.y, 350 - SIZE)
+        self.assertEqual(b.support.left, 260)
+        self.assertEqual(b.x, 460.0, "只对齐 y 不平移 x 的话，窗口横移宠物会留在原地")
+
+    def test_rides_even_a_snap_across_the_screen(self):
+        b = self.on_window()
+        b.support = self.WINDOW
+        b.x, b.y = 400.0, b.ground
+        b.set_ledges(LedgeSet([Ledge(500, 1000, 400, key=42)]))  # Win+→ 那种吸附
+        self.assertIsNotNone(b.support, "一次挪太远不该判成掉下去")
+        self.assertEqual(b.x, 700.0)
+
+    def test_falls_when_the_window_closes(self):
+        b = self.on_window()
+        b.support = self.WINDOW
+        b.x, b.y = 400.0, b.ground
+        b._enter(State.IDLE)
+        b.support = self.WINDOW               # _enter(IDLE) 不清 support
+        b.set_ledges(LedgeSet())
+        self.assertEqual(b.state, State.FALL)
+        self.assertIsNone(b.support)
+
+    def test_grabbing_leaves_the_window(self):
+        b = self.on_window()
+        b.support = self.WINDOW
+        b.grab()
+        self.assertIsNone(b.support)
+
+    def test_ledges_below_the_taskbar_are_ignored(self):
+        # 任务栏下面的东西站不了，否则宠物会沉到屏幕外
+        b = brain()
+        b.set_ledges(LedgeSet([Ledge(0, 900, BOUNDS[3] + 50, key=9)]))
+        b.x, b.y = 400.0, 50.0
+        b._enter(State.FALL)
+        run(b, 5.0, until=State.IDLE)
+        self.assertIsNone(b.support)
+        self.assertEqual(b.y, GROUND)
+
+    def test_a_hard_landing_on_a_window_still_dizzies(self):
+        b = self.on_window()
+        b.x, b.y = 400.0, float(self.WINDOW.y - SIZE) - 400.0
+        b._enter(State.FALL)
+        run(b, 6.0, until=State.DIZZY)
+        self.assertEqual(b.state, State.DIZZY)
 
 
 class TestPosture(unittest.TestCase):

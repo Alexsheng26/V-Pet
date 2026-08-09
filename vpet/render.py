@@ -77,6 +77,9 @@ def pose_for(state: State, t: float, facing: int = 1) -> Pose:
         return Pose(sx=0.94, sy=1.06, dx=-facing * 4.0, rot=math.sin(t * 2.2) * 2.5)
     if state is State.DIZZY:
         return Pose(sx=1.04, sy=0.97, rot=math.sin(t * 8.0) * 7.0)
+    if state is State.CURIOUS:
+        # 慢慢歪头。频率要比 dizzy 慢得多，否则两个状态看着一样
+        return Pose(rot=math.sin(t * 1.7) * 6.0, dy=-math.sin(t * 3.4) * 1.5)
     return Pose()
 
 
@@ -173,6 +176,8 @@ class BlobPet:
             self._paint_hearts(p, cx, t)
         elif state is State.DIZZY:
             self._paint_stars(p, cx, t)
+        elif state is State.CURIOUS:
+            self._paint_question(p, cx + w * 0.40, t)
 
     def _body_path(self, cx: float, bottom: float, w: float, h: float) -> QPainterPath:
         """梨形: 圆头 → 溜肩 → 下盘宽。没有脖子，一条曲线从头顶走到底。
@@ -255,6 +260,10 @@ class BlobPet:
             return 36.0, 36.0
         if state is State.DIZZY:
             return 50.0, 50.0
+        if state is State.CURIOUS:
+            # 一只手抬起来指，另一只垂着 —— 单手动作比两只手同时抬更像在打量
+            poke = 38.0 + math.sin(t * 3.2) * 12.0
+            return (poke, 16.0) if facing > 0 else (16.0, poke)
         if state is State.SLEEP:
             return 14.0, 14.0
         if state is State.CLING:
@@ -386,7 +395,7 @@ class BlobPet:
         elif state is State.DIZZY:
             self._dizzy_eyes(p, left, right, r)
         else:
-            wide = 1.25 if state in (State.DRAG, State.FALL) else 1.0
+            wide = 1.25 if state in (State.DRAG, State.FALL, State.CURIOUS) else 1.0
             self._open_eyes(p, left, right, r, wide)
 
         self._paint_mouth(p, state, cx + shift, eye_y + r * 2.4, w)
@@ -435,6 +444,8 @@ class BlobPet:
             half, depth = w * 0.070, w * 0.022
         elif state is State.DIZZY:
             depth = -depth * 0.7            # 往下撇
+        elif state is State.CURIOUS:
+            half, depth = w * 0.055, w * 0.02   # 抿成一小点
         p.setPen(QPen(self.MOUTH, max(1.2, w * 0.017), Qt.SolidLine, Qt.RoundCap))
         p.setBrush(Qt.NoBrush)
         path = QPainterPath()
@@ -456,6 +467,15 @@ class BlobPet:
             p.setFont(font)
             p.setPen(QColor(120, 132, 148, alpha))
             p.drawText(QPointF(x + phase * 9, y - phase * 20), "z")
+
+    def _paint_question(self, p: QPainter, x: float, t: float) -> None:
+        """头顶一个上下浮动的问号。和 zzz 一样锚在画布上，不会飘出去。"""
+        font = QFont()
+        font.setBold(True)
+        font.setPointSizeF(self.size * 0.115)
+        p.setFont(font)
+        p.setPen(QColor(255, 232, 150, 235))
+        p.drawText(QPointF(x, self.size * 0.20 + math.sin(t * 3.0) * 3.5), "?")
 
     def _paint_hearts(self, p: QPainter, cx: float, t: float) -> None:
         ceiling = self.size * 0.055        # 画布留白，爱心飘到这儿为止
