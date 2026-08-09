@@ -4,7 +4,7 @@
 能抓起来甩出去、贴到屏幕边上挂着、走过双屏之间的接缝。64 MB 免安装，冷启动 1.2 秒。
 
 [![CI](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml)
-![status](https://img.shields.io/badge/status-v1.0-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-153-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
+![status](https://img.shields.io/badge/status-v1.0-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-158-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![演示](docs/demo.gif)
 
@@ -203,9 +203,10 @@ tools/preview.py   生成状态对照图
 tools/make_icon.py 从角色渲染多尺寸 .ico
 tools/gif.py       手写的 GIF89a 编码器（调色板 + LZW + 帧间差分）
 tools/make_demo.py 驱动真实 PetBrain 录出 README 的演示动图
+tools/bundle.py    打包时要剔掉的 DLL 规则（spec 和 build.py 共用）
 tools/build.py     打包 + 自检
 v-pet.spec         PyInstaller 配置（手写的，要提交）
-tests/             153 个测试，用 offscreen 平台跑，不需要显示器
+tests/             158 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
@@ -328,6 +329,13 @@ dist/v-pet/
 ```
 
 **整体 64.6 MB，冷启动 1.2 秒**（`--selftest` 跑完全部渲染的耗时）。
+
+> 剔除规则按**前缀**匹配，不是精确文件名。v1.0 的发布包混进了 6.8MB 的
+> `libcrypto-3-x64.dll` —— 过滤表里写的是 `libcrypto-3.dll`，本地 Python 3.14
+> 打进来的正好叫这个、而 CI 的 3.13 带 `-x64` 后缀，精确匹配没命中、静默漏过。
+> 同一份代码在两台机器上产出不同的文件名，所以带版本号的必须按前缀匹配，
+> 而且 `build.py` 打完包会**复查有没有漏网**（漏了就非零退出）——
+> 静默漏过的表现只是"体积悄悄大了几兆"，不断言根本发现不了。
 未经裁剪的话是 111 MB —— 删掉的 46 MB 全是一个字节都用不上的东西，
 其中 `opengl32sw.dll` 一个就 19.7 MB（Mesa 的软件 OpenGL 回退，纯光栅绘制的
 Widgets 程序碰都不碰它），剩下是 QML 运行时、PDF、OpenSSL。
@@ -382,8 +390,8 @@ python -m unittest discover
 
 | Job | 干什么 |
 |---|---|
-| **架构守卫** | Linux，**故意不装 PySide6**，跑那 106 个不依赖 Qt 的测试 |
-| **测试** | Windows × Python 3.10 / 3.13 / 3.14，全部 153 个测试 + 源码模式自检 |
+| **架构守卫** | Linux，**故意不装 PySide6**，跑那 111 个不依赖 Qt 的测试 |
+| **测试** | Windows × Python 3.10 / 3.13 / 3.14，全部 158 个测试 + 源码模式自检 |
 | **打包** | 出 exe、跑 `--selftest`、重新生成演示动图、上传 zip 制品 |
 | **发布** | 只在推 `v*` 标签时触发，把 zip 挂上 GitHub Release |
 
@@ -392,7 +400,7 @@ python -m unittest discover
 如果只靠自觉，迟早会在某次"就 import 一下 `QPoint` 很方便"里破掉，
 而且在 Windows 上跑全套测试是**发现不了**的。所以那个 job 刻意不装 PySide6，
 还会先断言环境里确实没有它（装了就直接报错，免得这道守卫悄悄失效）。
-153 个测试里有 106 个能在这种环境下跑通，这个数字本身就是分层是否真的成立的度量。
+158 个测试里有 111 个能在这种环境下跑通，这个数字本身就是分层是否真的成立的度量。
 
 打包那步会顺手重跑 `tools/make_demo.py`。它自带断言 —— 所有状态都要在动图里
 出现过、落地冲击要真的越过摔懵阈值 —— 于是物理参数的回归也被这条流水线挡住了。

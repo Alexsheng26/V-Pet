@@ -10,7 +10,8 @@ excludes 是体积的大头。PySide6 默认会把 QtWebEngine、QtQuick、Qt3D 
 一个字节都用不上的东西拖进来，不排掉包体能翻好几倍。
 """
 
-from pathlib import Path  # noqa: F401  (UNWANTED_DLLS 过滤要用)
+import sys
+from pathlib import Path
 
 ROOT = Path(SPECPATH)  # noqa: F821  (PyInstaller 注入)
 
@@ -40,19 +41,9 @@ STDLIB_EXCLUDES = [
 
 # excludes 只作用于 **Python 模块分析**，而 PySide6 的 hook 是整包拷 DLL 的 ——
 # 排掉 PySide6.QtQml 并不会让 Qt6Qml.dll 不进包。所以还得按文件名再筛一道。
-# 这里删掉的加起来约 45MB，其中 opengl32sw.dll 一个就占 20MB(Mesa 的软件 OpenGL
-# 回退，纯光栅绘制的 Widgets 程序碰都不碰它)。
-# 删错的代价是 exe 双击没反应，所以 build.py 会用 `--selftest` 真渲一遍验证。
-UNWANTED_DLLS = {
-    "opengl32sw.dll",           # 软件 OpenGL 回退，20MB
-    "d3dcompiler_47.dll",       # ANGLE 的 D3D 着色器编译器，同理用不上
-    "qt6quick.dll", "qt6qml.dll", "qt6qmlmodels.dll", "qt6qmlmeta.dll",
-    "qt6qmlworkerscript.dll", "qt6quickcontrols2.dll", "qt6quicktemplates2.dll",
-    "qt6pdf.dll", "qt6pdfquick.dll", "qt6pdfwidgets.dll",
-    "qt6network.dll", "libcrypto-3.dll", "libssl-3.dll",
-    "qt6opengl.dll", "qt6openglwidgets.dll",
-    "qt6virtualkeyboard.dll",
-}
+# 规则放在 tools/bundle.py，因为 build.py 打完包还要用同一份规则复查漏网的。
+sys.path.insert(0, str(ROOT))
+from tools.bundle import is_unwanted  # noqa: E402
 
 a = Analysis(  # noqa: F821
     ["main.py"],
@@ -67,7 +58,7 @@ a = Analysis(  # noqa: F821
     optimize=0,
 )
 
-a.binaries = [b for b in a.binaries if Path(b[0]).name.lower() not in UNWANTED_DLLS]
+a.binaries = [b for b in a.binaries if not is_unwanted(Path(b[0]).name)]
 
 pyz = PYZ(a.pure)  # noqa: F821
 

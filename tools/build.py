@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from tools import use_utf8_stdio  # noqa: E402
+from tools.bundle import is_unwanted  # noqa: E402
 
 use_utf8_stdio()
 
@@ -62,6 +63,14 @@ def main() -> int:
         if required not in shipped:
             print(f"  ✗ 缺 {required} —— spec 里的 DLL 过滤删过头了")
             return 1
+
+    # 复查有没有漏网的。过滤是按文件名做的，而同一份代码在不同 Python 版本上
+    # 会产出不同的文件名（v1.0 就漏了 6.8MB 的 libcrypto-3-x64.dll）——
+    # 静默漏过的表现只是"体积悄悄大了几兆"，不断言根本发现不了。
+    leaked = sorted(f.name for f in DIST.rglob("*.dll") if is_unwanted(f.name))
+    if leaked:
+        print(f"  ✗ 这些本该被剔掉的 DLL 还在包里: {', '.join(leaked)}")
+        return 1
 
     print()
     print(f"产物     {DIST}")
