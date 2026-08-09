@@ -49,8 +49,11 @@ SCRIPT = [
     ("抱手待机", 1.6, "cross"),
     ("再拎起来", 0.5, "lift_low"),
     ("放到桌面图标上", 0.05, "drop_on_icon"),
-    ("好奇地打量", 2.2, None),
-    ("睡着了", 1.4, "sleep"),
+    ("好奇地打量", 1.8, None),
+    ("拎到墙边", 0.7, "lift_wall"),
+    ("趴在墙上", 0.05, "stick"),
+    ("扒着墙慢慢下滑", 2.2, None),
+    ("睡着了", 1.2, "sleep"),
 ]
 
 DESKTOP_TOP = QColor(38, 44, 56)
@@ -128,8 +131,10 @@ class Demo:
             b._enter(State.IDLE)
             b.posture = Posture.CROSSED
             b.next_switch = 99.0
-        elif action == "lift_low":
+        elif action in ("lift_low", "lift_wall"):
             b.grab()
+        elif action == "stick":
+            b.release()
         elif action == "drop_on_icon":
             # 真实程序里这一步由 window.py 判定脚底压在图标上时调用
             b.notice_on_landing()
@@ -144,6 +149,9 @@ class Demo:
         elif action == "lift_low":
             # 只抬一点点：落差太大会摔懵，摔懵优先级高于好奇，就看不到 curious 了
             b.drag_to(b.x - 70 * dt, max(b.ground - 90, b.y - 240 * dt))
+        elif action == "lift_wall":
+            # 贴到左墙、并且离地够高 —— release() 的贴墙判定要求这两条
+            b.drag_to(max(2.0, b.x - 900 * dt), max(70.0, b.y - 340 * dt))
         elif action == "flick":
             # 关键在**松手时还得留够下落高度**：冲击是 sqrt(v² + 2gh)，
             # 松手速度被 THROW_LIMIT 卡在 900，光靠它到不了摔懵的 1100，
@@ -198,7 +206,7 @@ def main() -> int:
 
     print(f"{out}  {WIDTH}x{HEIGHT}  {len(frames)} 帧  {size / 1024:.0f} KB")
     print(f"落地冲击峰值 {report['impact']:.0f}（摔懵阈值 1100）")
-    want = {"idle", "walk", "drag", "fall", "dizzy", "happy", "crossed", "sleep", "curious"}
+    want = {"idle", "walk", "drag", "fall", "dizzy", "happy", "crossed", "sleep", "curious", "cling"}
     missing = want - report["seen"]
     print("演示覆盖: " + ("全部状态都出现了 ✓" if not missing else f"少了 {sorted(missing)} ✗"))
     return 1 if missing else 0

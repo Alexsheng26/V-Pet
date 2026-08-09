@@ -64,6 +64,9 @@ STEP_LIMIT = 12.0
 IDLE_RANGE = (1.2, 4.0)
 WALK_RANGE = (0.8, 2.5)
 CLING_RANGE = (6.0, 15.0)
+# 趴在墙上会慢慢往下滑 —— 完全静止不动看着像贴纸，有一点点位移才像"扒住了但在滑"。
+# 速度要远小于 WALK_SPEED，否则不像滑而像沿墙走。
+CLING_SLIDE = 14.0      # px/s
 CROSS_CHANCE = 0.45     # 每次停下来抱手的概率
 # 抱着手的待机要站得更久，用普通的 1.2~4 秒经常刚抱上就又走了。
 # 注意下界必须 >= IDLE_RANGE 的上界: 两个区间一重叠，"抱手站得更久"就只是
@@ -436,6 +439,11 @@ class PetBrain:
         return True
 
     def _tick_cling(self, dt: float) -> None:
+        self.y += CLING_SLIDE * dt           # 扒住了，但在慢慢往下滑
+        if self.y >= self.ground:
+            self.y = self.ground
+            self._enter(State.IDLE)          # 滑到底了，直接站起来，没必要再摔一下
+            return
         if self.state_t >= self.next_switch:
             self.vx = -self.facing * 20.0    # 蹬一下墙再掉下去
             self._enter(State.FALL)

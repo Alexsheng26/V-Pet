@@ -51,7 +51,10 @@ class Pose:
     sy: float = 1.0     # 纵向缩放
     dx: float = 0.0     # 左右偏移(px)
     dy: float = 0.0     # 上下偏移(px)
-    rot: float = 0.0    # 绕底部中心旋转(度)
+    rot: float = 0.0    # 旋转(度)
+    # rot 默认绕**脚底中心**转，摇晃/踉跄都该以落脚点为轴。
+    # 但趴墙要整只转 90°，绕脚底转会把身体整个甩出画布，得改绕画布中心。
+    about_centre: bool = False
 
 
 def pose_for(state: State, t: float, facing: int = 1) -> Pose:
@@ -73,8 +76,18 @@ def pose_for(state: State, t: float, facing: int = 1) -> Pose:
         hop = math.sin(t * 8.0)
         return Pose(sx=1 - 0.035 * hop, sy=1 + 0.045 * hop, dy=-abs(hop) * 6.0)
     if state is State.CLING:
-        # 贴着墙被压扁一点，并朝墙的方向蹭过去；轻微摇晃表示挂不太稳
-        return Pose(sx=0.94, sy=1.06, dx=-facing * 4.0, rot=math.sin(t * 2.2) * 2.5)
+        # 趴在墙上：整只转 90°，脚底顶着墙，屏幕上是一个横躺的剪影。
+        # facing=1 表示趴在左墙上，脚要朝左 —— Qt 里正角度是顺时针，
+        # 而"下"(0,1) 顺时针转 90° 正好变成"左"(-1,0)，所以直接乘 facing。
+        # 再叠一点点晃动表示没趴稳。
+        # dy 不是随手调的：身体在画布里本来是偏下的（脚在底、头在上），
+        # 而支点在画布正中。不先把身体挪到支点上，转 90° 之后长轴就会偏向一侧、
+        # 顶出画布被裁。-11 正好让身体的竖直中心落在 size/2 上。
+        return Pose(
+            sx=1.0, sy=0.94, dy=-3.0,
+            rot=facing * 90.0 + math.sin(t * 1.9) * 3.0,
+            about_centre=True,
+        )
     if state is State.DIZZY:
         return Pose(sx=1.04, sy=0.97, rot=math.sin(t * 8.0) * 7.0)
     if state is State.CURIOUS:
@@ -146,9 +159,12 @@ class BlobPet:
             self._paint_shadow(p, w, bottom, pose.sy)
 
         p.save()
-        p.translate(cx, bottom)
+        pivot_x, pivot_y = (
+            (self.size / 2, self.size / 2) if pose.about_centre else (cx, bottom)
+        )
+        p.translate(pivot_x, pivot_y)
         p.rotate(pose.rot)
-        p.translate(-cx, -bottom)
+        p.translate(-pivot_x, -pivot_y)
 
         # 用径向渐变而不是竖直线性渐变: 参考造型是 3D 渲染的软光，
         # 亮部集中在左上方一小块、四周向暗处滚落，这样才有体积感。
@@ -164,8 +180,23 @@ class BlobPet:
 
         self._paint_belly(p, cx, bottom, w, h)
         self._paint_arms(p, state, t, facing, cx, bottom, w, h, posture)
-        self._paint_face(p, state, t, facing, cx, bottom, w, h)
-        p.restore()
+
+        # 趴墙时身体转了 90°，但**脸不能跟着转** —— 眼睛竖着排、嘴竖着，
+        # 读起来是"一坨躺倒的团子"而不是"贴在墙上的东西"。
+        # 桌宠贴墙的通行画法都是身体贴墙、脸仍然朝着你。
+        # 做法：先在旋转坐标系里量出头部落到了屏幕的哪儿，退出旋转后
+        # 平移过去、以正的姿态把脸画上。
+        face_at = QPointF(cx, bottom - h * 0.80)
+        if pose.about_centre:
+            offset = p.transform().map(face_at) - face_at
+            p.restore()
+            p.save()
+            p.translate(offset)
+            self._paint_face(p, state, t, facing, cx, bottom, w, h)
+            p.restore()
+        else:
+            self._paint_face(p, state, t, facing, cx, bottom, w, h)
+            p.restore()
 
         # 特效画在旋转之外，让它们始终朝上飘。
         # 爱心和星星的高度锚在**画布**上而不是身体顶上: 身体顶会随 pose 的
@@ -267,8 +298,10 @@ class BlobPet:
         if state is State.SLEEP:
             return 14.0, 14.0
         if state is State.CLING:
-            # facing=1 表示挂在左墙上，靠墙那侧的手抓着墙
-            return (148.0, 28.0) if facing > 0 else (28.0, 148.0)
+            # 整只已经转了 90°，身体坐标系的"下"就是墙的方向 ——
+            # 所以两只手都用小角度往下伸，看起来就是双手撑着墙。
+            grip = math.sin(t * 2.6) * 6.0
+            return 22.0 + grip, 22.0 - grip
         breathe = math.sin(t * 2.4) * 2.0
         return 22.0 + breathe, 22.0 + breathe
 
@@ -289,7 +322,9 @@ class BlobPet:
             return
 
         left, right = self._arm_angles(state, t, facing)
-        length = h * 0.22
+        # 趴墙时手要伸到脚底那一端才够得着墙。用站立时的 0.22h，手会停在
+        # 身体中段，读起来像两只耳朵而不是撑着墙的手。
+        length = h * (0.44 if state is State.CLING else 0.22)
         thumb = state is State.HAPPY
         self._draw_arm(p, QPointF(cx - shoulder_x, shoulder_y), -1, left, length, thickness, hand_r, thumb)
         self._draw_arm(p, QPointF(cx + shoulder_x, shoulder_y), 1, right, length, thickness, hand_r, thumb)
@@ -381,8 +416,6 @@ class BlobPet:
         eye_y = bottom - h * 0.80
         gap = w * 0.145
         shift = facing * w * 0.026          # 眼睛朝行进方向偏一点
-        if state is State.CLING:
-            shift = -shift                  # 挂墙上时往屏幕内侧瞟
         left = QPointF(cx - gap + shift, eye_y)
         right = QPointF(cx + gap + shift, eye_y)
         r = w * 0.078

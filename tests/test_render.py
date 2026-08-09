@@ -150,10 +150,17 @@ class TestStates(unittest.TestCase):
             pet.render(State.IDLE, 0.5, 1, 1.0, Posture.RELAXED),
         )
 
-    def test_cling_leans_toward_the_wall_it_hangs_on(self):
-        # facing=1 表示挂在左墙上、脸朝屏幕内侧，身体该往左蹭
-        self.assertLess(pose_for(State.CLING, 0.0, 1).dx, 0)
-        self.assertGreater(pose_for(State.CLING, 0.0, -1).dx, 0)
+    def test_cling_lies_flat_against_the_wall(self):
+        """趴墙是整只转 90°，不是站着往墙上蹭 —— 后者读起来像在挥手。"""
+        for facing in (1, -1):
+            rot = pose_for(State.CLING, 0.0, facing).rot
+            self.assertAlmostEqual(abs(rot), 90.0, delta=6.0, msg=f"facing={facing}")
+            self.assertEqual(rot > 0, facing > 0, "转的方向反了，脚会朝屏幕内侧")
+
+    def test_cling_spins_about_the_canvas_centre(self):
+        """绕脚底转的话，90° 会把整个身体甩出画布。"""
+        self.assertTrue(pose_for(State.CLING, 0.0, 1).about_centre)
+        self.assertFalse(pose_for(State.DIZZY, 0.0, 1).about_centre, "踉跄该以落脚点为轴")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
 能抓起来甩出去、贴到屏幕边上挂着、走过双屏之间的接缝。64 MB 免安装，冷启动 1.2 秒。
 
 [![CI](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml)
-![status](https://img.shields.io/badge/status-v0.8-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-152-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
+![status](https://img.shields.io/badge/status-v0.9-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-153-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![演示](docs/demo.gif)
 
@@ -62,7 +62,7 @@ python main.py
 |---|---|
 | 左键拖动 | 抓起来。松手带着甩出去的速度掉下来，落地弹两下 |
 | 摔得够狠 | 摔懵，头顶转圈星星 |
-| 拖到屏幕左右边缘松手 | 挂在墙上，晃晃悠悠，过几秒自己蹬墙掉下来 |
+| 拖到屏幕左右边缘松手 | **趴在墙上** —— 整只横过来、双手撑着墙、脸仍然朝着你，还会慢慢往下滑 |
 | 双击 / 在它身上来回搓 | 摸头，眯眼冒爱心 |
 | 右键 → 跟着鼠标 | 追着光标跑；追上就停下，不会在原地抖 |
 | 什么都不干 | 每次停下来有 45% 的概率抱起手，抱着手会站得更久 |
@@ -205,7 +205,7 @@ tools/gif.py       手写的 GIF89a 编码器（调色板 + LZW + 帧间差分�
 tools/make_demo.py 驱动真实 PetBrain 录出 README 的演示动图
 tools/build.py     打包 + 自检
 v-pet.spec         PyInstaller 配置（手写的，要提交）
-tests/             152 个测试，用 offscreen 平台跑，不需要显示器
+tests/             153 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
@@ -228,6 +228,26 @@ sprites/
 丢进去就自动换皮，一行代码不用改；缺哪个状态就自动退回 `idle`，可以一个状态一个状态地补。
 第一版**一帧图都不用画**是有意的 —— 素材才是这类项目真正的瓶颈，
 不该让它挡住"系统能不能跑通"的验证。
+
+## 趴在墙上：脸不能跟着身体转
+
+贴墙的第一版是"站着往墙上蹭一点"，读起来像在挥手，完全没有贴住的感觉。
+改成**整只转 90°**之后剪影对了 —— 屏幕上是一个横躺的形状压在边缘 ——
+但又冒出一个更明显的问题：**脸也跟着转了**，眼睛竖着排、嘴竖着，
+读起来是"一坨躺倒的团子"。
+
+所以身体转、脸不转：先在旋转后的坐标系里量出头部落到了屏幕的哪儿，
+退出旋转再平移过去、以正的姿态把脸画上。桌宠贴墙的通行画法都是这样。
+
+另外两处是量出来才发现的：
+
+- **旋转支点得从脚底改到画布中心。** 摇晃、踉跄都该绕落脚点转，但 90° 绕脚底
+  会把整个身体甩出画布。`Pose.about_centre` 就是为这个加的。
+- **手臂长度得翻倍。** 站立时是 `0.22h`，趴着时手会停在身体中段，
+  读起来像两只耳朵而不是撑着墙的手 —— 要伸到脚底那一端才够得着墙。
+
+身体在画布里本来是偏下的（脚在底、头在上），转 90° 后长轴会偏向一侧顶出画布，
+所以 `dy` 要先把身体挪到支点上，再往墙的方向推到几乎贴合（实测留 3px）。
 
 ## 抱手为什么不是一个状态
 
@@ -254,7 +274,7 @@ sprites/
    ↓ │(落稳且冲击小)        │
   DRAG ──(松手，离墙远)──→ FALL ──(冲击大)──→ DIZZY ──(1.8s)──┘
    │                        ↑
-   └──(松手，离墙近且离地够高)─→ CLING ──(6~15s 蹬墙)
+   └──(松手，离墙近且离地够高)─→ CLING ──(滑到底就站起来 / 6~15s 蹬墙)
 ```
 
 ## 四个只有测试才抓得到的 bug
@@ -363,7 +383,7 @@ python -m unittest discover
 | Job | 干什么 |
 |---|---|
 | **架构守卫** | Linux，**故意不装 PySide6**，跑那 106 个不依赖 Qt 的测试 |
-| **测试** | Windows × Python 3.10 / 3.13 / 3.14，全部 152 个测试 + 源码模式自检 |
+| **测试** | Windows × Python 3.10 / 3.13 / 3.14，全部 153 个测试 + 源码模式自检 |
 | **打包** | 出 exe、跑 `--selftest`、重新生成演示动图、上传 zip 制品 |
 | **发布** | 只在推 `v*` 标签时触发，把 zip 挂上 GitHub Release |
 
@@ -372,7 +392,7 @@ python -m unittest discover
 如果只靠自觉，迟早会在某次"就 import 一下 `QPoint` 很方便"里破掉，
 而且在 Windows 上跑全套测试是**发现不了**的。所以那个 job 刻意不装 PySide6，
 还会先断言环境里确实没有它（装了就直接报错，免得这道守卫悄悄失效）。
-152 个测试里有 106 个能在这种环境下跑通，这个数字本身就是分层是否真的成立的度量。
+153 个测试里有 106 个能在这种环境下跑通，这个数字本身就是分层是否真的成立的度量。
 
 打包那步会顺手重跑 `tools/make_demo.py`。它自带断言 —— 所有状态都要在动图里
 出现过、落地冲击要真的越过摔懵阈值 —— 于是物理参数的回归也被这条流水线挡住了。
