@@ -142,9 +142,26 @@ jobs:
       - name: 写发布说明
         run: |
           cat > notes.md <<'EOF'
-          解压后双击 `v-pet.exe` 即可，目标机器不需要装 Python。
+          ## 安装
 
-          想换皮：把 PNG 按 `sprites/{idle,walk,drag,fall,sleep,happy,cling,dizzy,curious}/00.png`
+          解压后双击 `v-pet.exe`，目标机器**不需要装 Python**。约 65 MB，冷启动 1 秒出头。
+
+          ## 能玩什么
+
+          - 左键拖着甩出去 —— 落地会弹，摔得够狠会摔懵
+          - 拖到屏幕左右边缘松手 —— **趴在墙上**，双手撑着墙慢慢往下滑
+          - 扔到窗口上方 —— 站在标题栏上溜达，窗口挪动它跟着走
+          - 拖到桌面图标上松手 —— 歪头打量
+          - 双击它，或在它身上来回搓 —— 摸头
+          - 放着不管半分钟 —— 睡着
+          - 右键 / 托盘 —— 跟着鼠标、改大小、开机自启
+
+          **怎么退出**：右键菜单、托盘图标，或者点中它按 `Esc`。
+          无边框窗口没有关闭按钮，这条值得先看一眼。
+
+          ## 换皮
+
+          把 PNG 按 `sprites/{idle,walk,drag,fall,sleep,happy,cling,dizzy,curious}/00.png`
           丢进 exe 旁边的 `sprites/` 目录，程序会自动使用，一行代码都不用改。
           EOF
       - name: 建 Release
