@@ -19,7 +19,7 @@ concurrency:
 jobs:
   portable:
     # 这个 job 不是"顺便在 Linux 上也跑一遍"，而是一道**架构守卫**：
-    # state.py / screens.py / config.py 声称不依赖 Qt，也不依赖 Windows。
+    # state.py / screens.py / ledges.py / config.py 声称不依赖 Qt，也不依赖 Windows。
     # 这里刻意**不安装 PySide6**、在 Linux 上跑它们的测试 ——
     # 哪天有人往行为层里 import 了一个 QPoint，这个 job 会立刻红，
     # 而在 Windows 上跑全套是发现不了的。
@@ -37,8 +37,12 @@ jobs:
             exit 1
           fi
           echo "没有 PySide6 ✓"
-      - name: 跑不依赖 Qt 的那 84 个测试
-        run: python -m unittest tests.test_brain tests.test_screens tests.test_config -v
+      - name: 跑不依赖 Qt 的那些测试
+        # 新增 Qt-free 模块时**必须**把对应的测试加进来，
+        # 否则这个 job 照样是绿的，但它根本没在检查新模块。
+        run: >
+          python -m unittest -v
+          tests.test_brain tests.test_screens tests.test_config tests.test_ledges
 
   test:
     name: 测试 · Windows · Python ${{ matrix.python }}
@@ -140,7 +144,7 @@ jobs:
           cat > notes.md <<'EOF'
           解压后双击 `v-pet.exe` 即可，目标机器不需要装 Python。
 
-          想换皮：把 PNG 按 `sprites/{idle,walk,drag,fall,sleep,happy,cling,dizzy}/00.png`
+          想换皮：把 PNG 按 `sprites/{idle,walk,drag,fall,sleep,happy,cling,dizzy,curious}/00.png`
           丢进 exe 旁边的 `sprites/` 目录，程序会自动使用，一行代码都不用改。
           EOF
       - name: 建 Release
