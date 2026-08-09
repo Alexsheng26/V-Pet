@@ -1,13 +1,19 @@
 ﻿# v-pet
 
-一只 Windows 桌面宠物。无边框、置顶、逐像素透明，可以拖着甩出去看它摔懵，也可以贴到屏幕边上挂着。
+**一只住在你任务栏上的 Windows 桌面宠物。** 无边框、置顶、逐像素透明，
+能抓起来甩出去、贴到屏幕边上挂着、走过双屏之间的接缝。64 MB 免安装，冷启动 1.2 秒。
 
-![state](https://img.shields.io/badge/status-v0.6-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-117-brightgreen) ![license](https://img.shields.io/badge/license-MIT-green)
+![status](https://img.shields.io/badge/status-v0.7-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-129-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
 
-![状态与姿势对照](docs/states.png)
+![演示](docs/demo.gif)
 
-> 上面这张图由 `python tools/preview.py` 生成。棋盘格背景是为了让"哪里是真透明"一眼可见 ——
-> 这类项目最容易翻车的地方就是以为画好了，贴到桌面上才发现边缘带一圈白底。
+> **这张动图不是摆拍的。** 它由 `tools/make_demo.py` 驱动**真实的 `PetBrain`** 生成 ——
+> 重力、落地反弹、摔懵的冲击判定、抱手的概率，全是产品代码算出来的，
+> 脚本只负责在特定时刻喂进"抓起来 / 松手 / 摸头"这些用户输入。
+> 生成器会自检：所有状态都得在图里出现过，落地冲击也要真的越过摔懵阈值，否则退出码非零。
+>
+> 顺带一提，**GIF 编码器也是手写的**（`tools/gif.py`，中位切分调色板 + LZW + 帧间差分）。
+> Qt 只能读 GIF 不能写，标准库也没有，而为了一张文档配图引入 Pillow 不划算。
 
 ---
 
@@ -18,9 +24,15 @@ pip install -r requirements.txt
 python main.py
 ```
 
-不需要任何素材文件 —— 角色是 `QPainter` 现画的。
+不需要任何素材文件 —— 角色是 `QPainter` 现画的。想要免安装的版本见[打包](#打包)。
 
 ## 角色是画的，不是贴的
+
+![状态与姿势对照](docs/states.png)
+
+> 由 `python tools/preview.py` 生成。棋盘格背景是为了让"哪里是真透明"一眼可见 ——
+> 这类项目最容易翻车的地方就是以为画好了，贴到桌面上才发现边缘带一圈白底。
+
 
 造型参考了一只网上流传的黄色团子（无颈梨形身体、奶油色肚子、大圆眼、深橄榄色的手），
 但代码里是**照着造型重画**的，没有把参考图打包进仓库。两个原因：
@@ -153,11 +165,13 @@ vpet/config.py     配置读写。不 import Qt
 vpet/autostart.py  开机自启（HKCU 的 Run 键）
 vpet/screens.py    多屏几何：接缝、死区、相邻判定。不 import Qt
 vpet/paths.py      程序目录解析（打包后 __file__ 不再指向仓库）
-tools/preview.py   生成上面那张状态对照图
+tools/preview.py   生成状态对照图
 tools/make_icon.py 从角色渲染多尺寸 .ico
+tools/gif.py       手写的 GIF89a 编码器（调色板 + LZW + 帧间差分）
+tools/make_demo.py 驱动真实 PetBrain 录出 README 的演示动图
 tools/build.py     打包 + 自检
 v-pet.spec         PyInstaller 配置（手写的，要提交）
-tests/             117 个测试，用 offscreen 平台跑，不需要显示器
+tests/             129 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
@@ -209,7 +223,7 @@ sprites/
    └──(松手，离墙近且离地够高)─→ CLING ──(6~15s 蹬墙)
 ```
 
-## 三个只有测试才抓得到的 bug
+## 四个只有测试才抓得到的 bug
 
 都不是崩溃，是"看起来在跑，其实是错的"那类。
 
@@ -230,6 +244,18 @@ sprites/
 所以断言不能写"没出界"，得写"离边缘至少还有半个像素"，用余量反推。
 加上这条之后它立刻又抓出 dizzy 甩手 + 旋转叠加时会顶到左边。
 → `test_nothing_touches_the_canvas_edge`
+
+**手写 GIF 的 LZW 码长差了一位。** 症状是解出来前 7 个像素正确、之后全是噪声。
+根因不直觉：**解码器的字典比编码器慢一步建起来**。编码器按自己的 `next_code`
+判断该不该加宽，就会比解码器早一个码切换 —— 那一个码上编码器写 n+1 位、
+解码器只读 n 位，从此彻底失步。判断条件必须是 `>` 而不是 `==`。
+
+这类错误看代码看不出来，肉眼看缩略图也未必看得出来。唯一靠得住的验证方式是
+**让一个独立实现的解码器把产物解回来逐像素比对** —— 这里用的是 Qt 自己的 GIF 读取器
+（它只能读不能写，正好当裁判）。
+→ `tests/test_gif.py::TestRoundTrip`
+
+<a id="打包"></a>
 
 ## 打包
 
