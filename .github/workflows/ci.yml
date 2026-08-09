@@ -71,6 +71,12 @@ jobs:
     name: 打包
     needs: [portable, test]
     runs-on: windows-latest
+    # runner 上没有可交互的桌面会话，Qt 找不到 windows 平台插件会直接 abort ——
+    # 生成图标和跑打包后的自检都要建 QGuiApplication，所以整个 job 走 offscreen。
+    # 这不会削弱验证：Qt 的 Core/Gui/Widgets 照样要从包体里加载起来，
+    # 而 windows 平台插件有没有被打进去，由 build.py 里的显式文件断言来管。
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -78,6 +84,14 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements-dev.txt
+      - name: Qt 环境探针
+        # 打包链路里每个脚本都要建 QGuiApplication。这一步单独把平台插件的情况
+        # 打出来，万一以后又挂在这儿，日志里能直接看出是环境问题还是代码问题，
+        # 而不是只留下一个 "build.py 非零退出"。
+        run: >
+          python -c "import sys; from PySide6.QtGui import QGuiApplication;
+          app = QGuiApplication(sys.argv);
+          print('platform =', app.platformName(), '| screens =', len(app.screens()))"
       - name: 打包并自检
         # --no-window-check：runner 上真开一个置顶窗口需要可交互桌面会话，
         # 是最容易因环境而非代码挂掉的一步；它验的东西 --selftest 都覆盖了。

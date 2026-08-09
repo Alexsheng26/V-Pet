@@ -44,6 +44,19 @@ def main() -> int:
     shutil.copy2(ROOT / "sprites" / "README.md", sprites / "README.md")
 
     exe = DIST / "v-pet.exe"
+
+    # 平台插件必须显式查。为压体积按文件名删过几十兆 DLL，万一把 qwindows.dll
+    # 一起删了，程序在本机可能还能跑（Qt 会去别处找），但换台机器就白窗。
+    # 以前这件事是靠"真开一个窗口看它活不活得过 6 秒"间接证明的 ——
+    # 那需要可交互桌面会话，在 CI 上根本不成立。查文件既确定又跟环境无关。
+    plugins = DIST / "_internal" / "PySide6" / "plugins" / "platforms"
+    shipped = sorted(p.name for p in plugins.glob("*.dll")) if plugins.is_dir() else []
+    print(f"平台插件 {', '.join(shipped) or '一个都没有'}")
+    for required in ("qwindows.dll", "qoffscreen.dll"):
+        if required not in shipped:
+            print(f"  ✗ 缺 {required} —— spec 里的 DLL 过滤删过头了")
+            return 1
+
     print()
     print(f"产物     {DIST}")
     print(f"exe      {exe.stat().st_size / 1024 / 1024:.1f} MB")
