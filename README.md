@@ -344,6 +344,12 @@ python -m unittest discover
 打包那步会顺手重跑 `tools/make_demo.py`。它自带断言 —— 所有状态都要在动图里
 出现过、落地冲击要真的越过摔懵阈值 —— 于是物理参数的回归也被这条流水线挡住了。
 
+发版：打个 `v` 开头的标签推上去，流水线会把 zip 挂到 GitHub Release。
+
+```bash
+git tag v0.7 && git push origin v0.7
+```
+
 `--no-window-check` 让 CI 跳过"真开一个置顶窗口看它活不活得过 6 秒"那一步：
 那需要可交互的桌面会话，是整条流水线里最容易因**环境**而不是因代码挂掉的一环，
 而它验的东西 `--selftest` 已经覆盖了（构造窗口、建托盘、调 Win32）。
