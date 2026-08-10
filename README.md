@@ -16,6 +16,8 @@
 > 顺带一提，**GIF 编码器也是手写的**（`tools/gif.py`，中位切分调色板 + LZW + 帧间差分）。
 > Qt 只能读 GIF 不能写，标准库也没有，而为了一张文档配图引入 Pillow 不划算。
 
+**English → [README.en.md](README.en.md)**
+
 ---
 
 ## 跑起来
