@@ -5,7 +5,7 @@ per-pixel alpha. Throw it across the screen, stick it flat against the screen ed
 let it walk along the title bars of your open windows. 65 MB portable, 1.2 s cold start.
 
 [![CI](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml)
-![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-158-brightgreen) ![deps](https://img.shields.io/badge/runtime%20deps-PySide6%20only-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
+![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-172-brightgreen) ![deps](https://img.shields.io/badge/runtime%20deps-PySide6%20only-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![demo](docs/demo.gif)
 
@@ -135,18 +135,41 @@ Polling rates were measured, not guessed: enumerating windows costs 0.2 ms so it
 every 100 ms; enumerating icons costs 1.6 ms (~10% of a frame budget) so it runs **once,
 on mouse release**, and never in the frame loop.
 
-## Architecture
+### Crashes have to leave something behind
+
+A `console=False` window application **has no stderr anyone can read**. An uncaught
+exception looks exactly like "the pet vanished" — tray icon gone, window gone, nothing
+left. The user can't report *how* it broke and you can't diagnose it. That's worse than
+the crash itself.
+
+So `crashlog.py` writes the traceback plus version, platform and frozen-state to
+`%APPDATA%\v-pet\crash.log`, and the window layer raises a tray notification pointing
+at the file.
+
+Two details came out of measurement:
+
+- **An exception in a Qt slot does not terminate the program.** PySide6 6.11 calls
+  `sys.excepthook` and the event loop keeps going — and the main loop runs at 60 fps,
+  so one bug writes 60 log entries per second. Deduplication is **required, not an
+  optimisation**, and the loop stops its own timer as well, otherwise the same bug
+  keeps firing sixty times a second.
+- **A crash handler must never throw.** `record()` is wrapped end to end and returns
+  `None` on a full disk or a permissions error. A crash handler that crashes is worse
+  than none.
+
+### Architecture
 
 ```
 vpet/state.py      behaviour: state machine + physics.   no Qt imports
 vpet/screens.py    multi-monitor geometry: seams, dead zones, adjacency.  no Qt imports
 vpet/ledges.py     standable surfaces: landing, following a moving window. no Qt imports
 vpet/config.py     persistence.                          no Qt imports
+vpet/crashlog.py   uncaught exceptions -> a log file.    no Qt imports
 vpet/render.py     state -> QImage, plus a character-agnostic pose system
 vpet/window.py     transparency, always-on-top, dragging, click-through, tray
 vpet/desktop.py    Win32: enumerate window edges and desktop icons
 tools/             docs generation, icon generation, packaging
-tests/             158 tests, 111 of which need no Qt at all
+tests/             172 tests, 125 of which need no Qt at all
 ```
 
 Three seams, all so that changing one side doesn't touch the other:
@@ -214,7 +237,7 @@ that should have been stripped is still in the bundle.
 ## Build & test
 
 ```bash
-python -m unittest discover          # 158 tests, offscreen, no display needed
+python -m unittest discover          # 172 tests, offscreen, no display needed
 python tools/build.py                # -> dist/v-pet/, 65 MB, self-checked
 python tools/preview.py docs/states.png
 python tools/make_demo.py docs/demo.gif

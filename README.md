@@ -4,7 +4,7 @@
 能抓起来甩出去、贴到屏幕边上挂着、走过双屏之间的接缝。64 MB 免安装，冷启动 1.2 秒。
 
 [![CI](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml)
-![status](https://img.shields.io/badge/status-v1.0.1-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-158-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
+![status](https://img.shields.io/badge/status-v1.0.1-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-172-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![演示](docs/demo.gif)
 
@@ -183,7 +183,25 @@ Qt 只能整个窗口开关 `WA_TransparentForMouseEvents`，做不到按像素�
 刷新频率是量出来的：枚举窗口 0.2ms，所以每 100ms 轮询一次；枚举图标 1.6ms
 （约 10% 帧预算），所以**只在松手那一刻查一次**，不进每帧循环。
 
-### 7. 退出路径要先于一切
+### 7. 崩了要留下痕迹
+
+`console=False` 的窗口程序**没有可看的 stderr**。抛一个未捕获异常的表现就是
+"宠物突然不见了" —— 托盘图标没了、窗口没了、什么都不留下。用户没法反馈
+"它崩了，是这么崩的"，开发者也无从排查。这比崩溃本身更麻烦。
+
+所以 `crashlog.py` 把 traceback 连同版本、平台、是否打包写进
+`%APPDATA%\v-pet\crash.log`，窗口层再弹一条托盘通知告诉用户日志在哪。
+
+有两处是实测才定下来的：
+
+- **槽函数抛异常之后程序不会终止。** PySide6 6.11 会调 `sys.excepthook`，
+  但事件循环照常跑下去 —— 而主循环是 60fps，同一个 bug 每秒会往日志里写 60 条。
+  所以去重是**必需的，不是优化**；主循环那层还会主动 `timer.stop()`，
+  否则那个 bug 每秒还要再犯 60 次。
+- **崩溃处理器绝不能自己抛异常。** `record()` 整个包在 try 里，
+  磁盘满、没权限一律返回 None —— 一个会崩的崩溃处理器比没有还糟。
+
+### 8. 退出路径要先于一切
 
 无边框窗口没有关闭按钮。托盘菜单和 Esc 是在写第一行渲染代码之前接上的，
 否则很容易做出一个只能开任务管理器杀掉的窗口。
@@ -200,6 +218,7 @@ vpet/autostart.py  开机自启（HKCU 的 Run 键）
 vpet/screens.py    多屏几何：接缝、死区、相邻判定。不 import Qt
 vpet/ledges.py     可站的台面：落点、跟随移动。不 import Qt
 vpet/desktop.py    Win32：枚举窗口上沿和桌面图标
+vpet/crashlog.py   未捕获异常落地成日志。不 import Qt
 vpet/paths.py      程序目录解析（打包后 __file__ 不再指向仓库）
 tools/preview.py   生成状态对照图
 tools/make_icon.py 从角色渲染多尺寸 .ico
@@ -208,7 +227,7 @@ tools/make_demo.py 驱动真实 PetBrain 录出 README 的演示动图
 tools/bundle.py    打包时要剔掉的 DLL 规则（spec 和 build.py 共用）
 tools/build.py     打包 + 自检
 v-pet.spec         PyInstaller 配置（手写的，要提交）
-tests/             158 个测试，用 offscreen 平台跑，不需要显示器
+tests/             172 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
@@ -392,8 +411,8 @@ python -m unittest discover
 
 | Job | 干什么 |
 |---|---|
-| **架构守卫** | Linux，**故意不装 PySide6**，跑那 111 个不依赖 Qt 的测试 |
-| **测试** | Windows × Python 3.10 / 3.13 / 3.14，全部 158 个测试 + 源码模式自检 |
+| **架构守卫** | Linux，**故意不装 PySide6**，跑那 125 个不依赖 Qt 的测试 |
+| **测试** | Windows × Python 3.10 / 3.13 / 3.14，全部 172 个测试 + 源码模式自检 |
 | **打包** | 出 exe、跑 `--selftest`、重新生成演示动图、上传 zip 制品 |
 | **发布** | 只在推 `v*` 标签时触发，把 zip 挂上 GitHub Release |
 
@@ -402,7 +421,7 @@ python -m unittest discover
 如果只靠自觉，迟早会在某次"就 import 一下 `QPoint` 很方便"里破掉，
 而且在 Windows 上跑全套测试是**发现不了**的。所以那个 job 刻意不装 PySide6，
 还会先断言环境里确实没有它（装了就直接报错，免得这道守卫悄悄失效）。
-158 个测试里有 111 个能在这种环境下跑通，这个数字本身就是分层是否真的成立的度量。
+172 个测试里有 125 个能在这种环境下跑通，这个数字本身就是分层是否真的成立的度量。
 
 打包那步会顺手重跑 `tools/make_demo.py`。它自带断言 —— 所有状态都要在动图里
 出现过、落地冲击要真的越过摔懵阈值 —— 于是物理参数的回归也被这条流水线挡住了。

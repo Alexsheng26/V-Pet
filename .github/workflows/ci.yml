@@ -19,7 +19,7 @@ concurrency:
 jobs:
   portable:
     # 这个 job 不是"顺便在 Linux 上也跑一遍"，而是一道**架构守卫**：
-    # state.py / screens.py / ledges.py / config.py 声称不依赖 Qt，也不依赖 Windows。
+    # state.py / screens.py / ledges.py / config.py / crashlog.py 声称不依赖 Qt。
     # 这里刻意**不安装 PySide6**、在 Linux 上跑它们的测试 ——
     # 哪天有人往行为层里 import 了一个 QPoint，这个 job 会立刻红，
     # 而在 Windows 上跑全套是发现不了的。
@@ -43,6 +43,7 @@ jobs:
         run: >
           python -m unittest -v
           tests.test_brain tests.test_screens tests.test_config tests.test_ledges
+          tests.test_crashlog tests.test_bundle
 
   test:
     name: 测试 · Windows · Python ${{ matrix.python }}

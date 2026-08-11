@@ -32,7 +32,7 @@ from PySide6.QtCore import QElapsedTimer, QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
-from . import autostart, desktop
+from . import autostart, crashlog, desktop
 from .config import SIZE_CHOICES, Config
 from .ledges import Ledge, LedgeSet
 from .screens import Screen, ScreenLayout
@@ -46,6 +46,7 @@ RUB_DECAY = 0.92         # 每帧衰减: 慢慢划过去不算，得来回搓才
 # 窗口台面的刷新间隔。实测枚举一次 0.2ms，每帧做也不至于卡，但没必要；
 # 100ms 已经足够让宠物跟上被拖动的窗口，肉眼看不出延迟。
 LEDGE_REFRESH_MS = 100
+CRASH_QUIT_DELAY_MS = 6000   # 崩溃后留这么久让用户看到托盘通知，再退出
 
 _IS_WINDOWS = sys.platform == "win32"
 _GWL_EXSTYLE = -20
@@ -102,6 +103,39 @@ class PetWindow(QWidget):
 
     # --- 主循环 -----------------------------------------------------------
     def _tick(self) -> None:
+        """每帧的入口，只负责兜住异常。真正的工作在 _advance 里。
+
+        实测 PySide6 6.11 在槽函数抛异常之后**不会终止程序**：
+        sys.excepthook 会被调用，但事件循环照常跑下去。而这个循环是 60fps ——
+        不主动停下来的话，同一个 bug 每秒会再犯 60 次。
+        """
+        try:
+            self._advance()
+        except Exception:
+            self._timer.stop()
+            written = crashlog.record(*sys.exc_info())
+            self.hide()
+            self.report_crash(written)
+            QTimer.singleShot(CRASH_QUIT_DELAY_MS, QApplication.quit)
+
+    def report_crash(self, written) -> None:
+        """告诉用户崩了、日志在哪。
+
+        没有这一步的话，用户看到的只是"宠物突然不见了" ——
+        既不知道发生了什么，也没有任何能反馈给开发者的东西。
+        """
+        where = str(written) if written else "日志写不进去（磁盘满或无权限）"
+        try:
+            self.tray.showMessage(
+                "v-pet 出错了，已退出",
+                f"崩溃日志：{where}",
+                QSystemTrayIcon.MessageIcon.Critical,
+                8000,
+            )
+        except Exception:
+            pass                      # 通知发不出去也不能再抛一次
+
+    def _advance(self) -> None:
         dt = min(self._clock.restart() / 1000.0, MAX_DT)
         self._t += dt
         cursor = QCursor.pos()

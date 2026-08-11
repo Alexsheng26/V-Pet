@@ -10,6 +10,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from vpet import crashlog
 from vpet.config import Config
 from vpet.paths import sprites_dir
 from vpet.render import pick_provider
@@ -51,6 +52,10 @@ def main() -> int:
     if "--selftest" in sys.argv:
         return selftest()
 
+    # 先装一次不带通知的：窗口还没建起来就崩的话，至少日志要留下。
+    # 这个程序没有控制台，未捕获异常的表现是"双击了没反应"或者"宠物突然不见了"。
+    crashlog.install()
+
     app = QApplication(sys.argv)
     # 托盘还在，"藏起来"就不该导致进程退出
     app.setQuitOnLastWindowClosed(False)
@@ -59,6 +64,8 @@ def main() -> int:
     # 不能写 Path(__file__).parent —— 打包后它不指向 exe 所在目录
     provider = pick_provider(sprites_dir(), config.size)
     window = PetWindow(provider, config)
+    # 托盘建好之后再装一次，这回带上通知 —— 让用户知道崩了、日志在哪
+    crashlog.install(notify=window.report_crash)
 
     # 挂在 aboutToQuit 上而不是 closeEvent: 这个窗口正常情况下根本不会被 close，
     # 退出走的是托盘/菜单里的 QApplication.quit()。
