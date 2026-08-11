@@ -10,7 +10,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from vpet import crashlog
+from vpet import crashlog, instance
 from vpet.config import Config
 from vpet.paths import sprites_dir
 from vpet.render import pick_provider
@@ -55,6 +55,13 @@ def main() -> int:
     # 先装一次不带通知的：窗口还没建起来就崩的话，至少日志要留下。
     # 这个程序没有控制台，未捕获异常的表现是"双击了没反应"或者"宠物突然不见了"。
     crashlog.install()
+
+    # 单实例：两只宠物写的是同一个 config.json，位置和设置会互相覆盖。
+    # 不是静默退出 —— 招呼一声让已经在跑的那只露个面，否则用户看到的是
+    # "双击了没反应"，尤其是它正被"藏起来"的时候。
+    if not instance.acquire():
+        instance.broadcast_wake()
+        return 0
 
     app = QApplication(sys.argv)
     # 托盘还在，"藏起来"就不该导致进程退出

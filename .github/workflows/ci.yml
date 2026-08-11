@@ -43,7 +43,7 @@ jobs:
         run: >
           python -m unittest -v
           tests.test_brain tests.test_screens tests.test_config tests.test_ledges
-          tests.test_crashlog tests.test_bundle
+          tests.test_crashlog tests.test_bundle tests.test_instance
 
   test:
     name: 测试 · Windows · Python ${{ matrix.python }}

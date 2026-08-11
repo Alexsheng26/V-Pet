@@ -5,7 +5,7 @@ per-pixel alpha. Throw it across the screen, stick it flat against the screen ed
 let it walk along the title bars of your open windows. 65 MB portable, 1.2 s cold start.
 
 [![CI](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml)
-![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-172-brightgreen) ![deps](https://img.shields.io/badge/runtime%20deps-PySide6%20only-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
+![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-181-brightgreen) ![deps](https://img.shields.io/badge/runtime%20deps-PySide6%20only-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![demo](docs/demo.gif)
 
@@ -157,6 +157,24 @@ Two details came out of measurement:
   `None` on a full disk or a permissions error. A crash handler that crashes is worse
   than none.
 
+#### Two pets overwrite each other's config
+
+Double-click the exe twice and you get two pets — **writing the same `config.json`**.
+Position, size and toggles clobber each other and whoever quits last wins. With autostart
+enabled, opening it manually once is enough to hit this, which is the most likely case.
+
+This uses a **named mutex** rather than a lock file: however the process dies — crash,
+Task Manager, power cut — the system releases it. A lock file survives all of those and
+leaves a program that **can never start again**, which is worse than no guard at all.
+
+The second instance doesn't exit silently; it **broadcasts a custom window message** so
+the running one shows itself. Otherwise the user sees "double-clicking does nothing",
+especially when the pet is currently hidden.
+
+The handler has to be **idempotent**: `HWND_BROADCAST` is delivered to *every* top-level
+window in the process, including Qt's hidden helper windows — measured, one broadcast
+arrives five times.
+
 ### Architecture
 
 ```
@@ -165,11 +183,12 @@ vpet/screens.py    multi-monitor geometry: seams, dead zones, adjacency.  no Qt 
 vpet/ledges.py     standable surfaces: landing, following a moving window. no Qt imports
 vpet/config.py     persistence.                          no Qt imports
 vpet/crashlog.py   uncaught exceptions -> a log file.    no Qt imports
+vpet/instance.py   single-instance guard (named mutex)
 vpet/render.py     state -> QImage, plus a character-agnostic pose system
 vpet/window.py     transparency, always-on-top, dragging, click-through, tray
 vpet/desktop.py    Win32: enumerate window edges and desktop icons
 tools/             docs generation, icon generation, packaging
-tests/             172 tests, 125 of which need no Qt at all
+tests/             181 tests, 134 of which need no Qt at all
 ```
 
 Three seams, all so that changing one side doesn't touch the other:
@@ -237,7 +256,7 @@ that should have been stripped is still in the bundle.
 ## Build & test
 
 ```bash
-python -m unittest discover          # 172 tests, offscreen, no display needed
+python -m unittest discover          # 181 tests, offscreen, no display needed
 python tools/build.py                # -> dist/v-pet/, 65 MB, self-checked
 python tools/preview.py docs/states.png
 python tools/make_demo.py docs/demo.gif

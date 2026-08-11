@@ -28,11 +28,13 @@ import ctypes
 import sys
 from ctypes import wintypes
 
-from PySide6.QtCore import QElapsedTimer, QPoint, QRect, Qt, QTimer
+from PySide6.QtCore import (
+    QAbstractNativeEventFilter, QElapsedTimer, QPoint, QRect, Qt, QTimer,
+)
 from PySide6.QtGui import QAction, QActionGroup, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
-from . import autostart, crashlog, desktop
+from . import autostart, crashlog, desktop, instance
 from .config import SIZE_CHOICES, Config
 from .ledges import Ledge, LedgeSet
 from .screens import Screen, ScreenLayout
@@ -90,6 +92,7 @@ class PetWindow(QWidget):
         self._ledge_clock = QElapsedTimer()
         self._ledge_clock.start()
 
+        self._install_wake_filter()
         self._build_actions()
         self._build_tray()
         self._restore_position()
@@ -271,6 +274,26 @@ class PetWindow(QWidget):
             self.config.size = self.provider.size
         return self.config.save(self.config_path)
 
+    # --- 第二个实例来敲门 --------------------------------------------------
+    def _install_wake_filter(self) -> None:
+        if not _IS_WINDOWS:
+            return
+        self._wake_filter = _WakeFilter(instance.wake_message(), self.wake_up)
+        app = QApplication.instance()
+        if app is not None:
+            app.installNativeEventFilter(self._wake_filter)
+
+    def wake_up(self) -> None:
+        """有人又双击了一次 exe。露个面，别让他以为程序坏了。
+
+        必须是幂等的：HWND_BROADCAST 会投递给进程里**每一个**顶层窗口
+        （含 Qt 的隐藏辅助窗口），实测一次广播会命中五次。
+        """
+        self.show()
+        self.raise_()
+        self._toggle_action.setText("藏起来")
+        self.brain.wake()
+
     # --- 菜单与托盘 -------------------------------------------------------
     def _build_actions(self) -> None:
         # 同一个 QAction 挂在右键菜单和托盘菜单上，勾选状态天然同步
@@ -436,9 +459,36 @@ class PetWindow(QWidget):
         self.brain.set_layout(layout)
 
 
+class _WakeFilter(QAbstractNativeEventFilter):
+    """只盯一个自定义窗口消息，其余原样放行。"""
+
+    def __init__(self, message_id: int, on_wake) -> None:
+        super().__init__()
+        self._id = message_id
+        self._on_wake = on_wake
+
+    def nativeEventFilter(self, event_type, message):
+        if event_type == b"windows_generic_MSG" and self._id:
+            try:
+                msg = ctypes.cast(int(message), ctypes.POINTER(_MSG)).contents
+                if msg.message == self._id:
+                    self._on_wake()
+            except Exception:
+                pass            # 事件过滤器里抛异常会波及整个事件循环
+        return False, 0         # 永远放行，我们只是旁听
+
+
 # --- Win32 --------------------------------------------------------------
 # 64 位下必须走 ...LongPtrW 并显式声明 argtypes/restype，
 # 否则 ctypes 会按 32 位 int 截断句柄和 style，行为随机出错。
+class _MSG(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM), ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD), ("pt_x", wintypes.LONG), ("pt_y", wintypes.LONG),
+    ]
+
+
 if _IS_WINDOWS:
     _user32 = ctypes.windll.user32
     _get = getattr(_user32, "GetWindowLongPtrW", _user32.GetWindowLongW)

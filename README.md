@@ -4,7 +4,7 @@
 能抓起来甩出去、贴到屏幕边上挂着、走过双屏之间的接缝。64 MB 免安装，冷启动 1.2 秒。
 
 [![CI](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml)
-![status](https://img.shields.io/badge/status-v1.0.1-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-172-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
+![status](https://img.shields.io/badge/status-v1.0.1-blue) ![python](https://img.shields.io/badge/python-3.10%2B-3776ab) ![tests](https://img.shields.io/badge/tests-181-brightgreen) ![deps](https://img.shields.io/badge/运行时依赖-仅%20PySide6-blueviolet) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ![演示](docs/demo.gif)
 
@@ -201,7 +201,23 @@ Qt 只能整个窗口开关 `WA_TransparentForMouseEvents`，做不到按像素�
 - **崩溃处理器绝不能自己抛异常。** `record()` 整个包在 try 里，
   磁盘满、没权限一律返回 None —— 一个会崩的崩溃处理器比没有还糟。
 
-### 8. 退出路径要先于一切
+### 8. 两只宠物会互相覆盖对方的配置
+
+双击两次 exe 就有两只，而它们**写的是同一个 config.json** —— 位置、大小、
+跟随开关互相覆盖，最后谁退出得晚谁说了算。开机自启之后再手动打开一次也会撞上，
+而这恰恰是最容易发生的情况。
+
+用**命名互斥量**而不是锁文件：进程无论怎么死（崩溃、任务管理器杀掉、断电），
+系统都会自动释放。锁文件在这些情况下会留在磁盘上，程序**从此再也起不来** ——
+那比没有保护更糟。
+
+第二个实例不是闷声退出，而是**广播一条自定义窗口消息**让已经在跑的那只露个面。
+否则用户看到的是"双击了没反应"，尤其在宠物正被"藏起来"的时候，他会以为程序坏了。
+
+处理函数必须**幂等**：实测 `HWND_BROADCAST` 会投递给进程里*每一个*顶层窗口
+（含 Qt 的隐藏辅助窗口），一次广播命中五次。
+
+### 9. 退出路径要先于一切
 
 无边框窗口没有关闭按钮。托盘菜单和 Esc 是在写第一行渲染代码之前接上的，
 否则很容易做出一个只能开任务管理器杀掉的窗口。
@@ -219,6 +235,7 @@ vpet/screens.py    多屏几何：接缝、死区、相邻判定。不 import Qt
 vpet/ledges.py     可站的台面：落点、跟随移动。不 import Qt
 vpet/desktop.py    Win32：枚举窗口上沿和桌面图标
 vpet/crashlog.py   未捕获异常落地成日志。不 import Qt
+vpet/instance.py   单实例保护（命名互斥量 + 唤醒广播）
 vpet/paths.py      程序目录解析（打包后 __file__ 不再指向仓库）
 tools/preview.py   生成状态对照图
 tools/make_icon.py 从角色渲染多尺寸 .ico
@@ -227,7 +244,7 @@ tools/make_demo.py 驱动真实 PetBrain 录出 README 的演示动图
 tools/bundle.py    打包时要剔掉的 DLL 规则（spec 和 build.py 共用）
 tools/build.py     打包 + 自检
 v-pet.spec         PyInstaller 配置（手写的，要提交）
-tests/             172 个测试，用 offscreen 平台跑，不需要显示器
+tests/             181 个测试，用 offscreen 平台跑，不需要显示器
 ```
 
 三条切割线，都是为了让"改一边不用碰另一边"：
@@ -411,8 +428,8 @@ python -m unittest discover
 
 | Job | 干什么 |
 |---|---|
-| **架构守卫** | Linux，**故意不装 PySide6**，跑那 125 个不依赖 Qt 的测试 |
-| **测试** | Windows × Python 3.10 / 3.13 / 3.14，全部 172 个测试 + 源码模式自检 |
+| **架构守卫** | Linux，**故意不装 PySide6**，跑那 134 个不依赖 Qt 的测试 |
+| **测试** | Windows × Python 3.10 / 3.13 / 3.14，全部 181 个测试 + 源码模式自检 |
 | **打包** | 出 exe、跑 `--selftest`、重新生成演示动图、上传 zip 制品 |
 | **发布** | 只在推 `v*` 标签时触发，把 zip 挂上 GitHub Release |
 
@@ -421,7 +438,7 @@ python -m unittest discover
 如果只靠自觉，迟早会在某次"就 import 一下 `QPoint` 很方便"里破掉，
 而且在 Windows 上跑全套测试是**发现不了**的。所以那个 job 刻意不装 PySide6，
 还会先断言环境里确实没有它（装了就直接报错，免得这道守卫悄悄失效）。
-172 个测试里有 125 个能在这种环境下跑通，这个数字本身就是分层是否真的成立的度量。
+181 个测试里有 134 个能在这种环境下跑通，这个数字本身就是分层是否真的成立的度量。
 
 打包那步会顺手重跑 `tools/make_demo.py`。它自带断言 —— 所有状态都要在动图里
 出现过、落地冲击要真的越过摔懵阈值 —— 于是物理参数的回归也被这条流水线挡住了。
