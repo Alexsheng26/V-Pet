@@ -76,17 +76,19 @@ def pose_for(state: State, t: float, facing: int = 1) -> Pose:
         hop = math.sin(t * 8.0)
         return Pose(sx=1 - 0.035 * hop, sy=1 + 0.045 * hop, dy=-abs(hop) * 6.0)
     if state is State.CLING:
-        # 趴在墙上：整只转 90°，脚底顶着墙，屏幕上是一个横躺的剪影。
-        # facing=1 表示趴在左墙上，脚要朝左 —— Qt 里正角度是顺时针，
-        # 而"下"(0,1) 顺时针转 90° 正好变成"左"(-1,0)，所以直接乘 facing。
-        # 再叠一点点晃动表示没趴稳。
-        # dy 不是随手调的：身体在画布里本来是偏下的（脚在底、头在上），
-        # 而支点在画布正中。不先把身体挪到支点上，转 90° 之后长轴就会偏向一侧、
-        # 顶出画布被裁。-11 正好让身体的竖直中心落在 size/2 上。
+        # 扒在墙上：正面朝着观众，身体压扁，四肢朝四角张开（见 _paint_arms）。
+        #
+        # 试过把整只转 90°"横贴"在屏幕边上 —— 手确实按在墙线上，几何是对的，
+        # 但读起来是"躺倒"而不是"扒住"。正面视角的 2D 角色有个绕不开的限制：
+        # **靠墙那侧的肢体会被身体自己挡住**，所以任何"侧贴"的画法都看不到
+        # 接触点。真正让人一眼认出"扒住"的是**四肢朝四个方向张开、
+        # 接触点拉得很开**，而不是身体贴着哪条线。
+        breathe = math.sin(t * 2.0)
         return Pose(
-            sx=1.0, sy=0.94, dy=-3.0,
-            rot=facing * 90.0 + math.sin(t * 1.9) * 3.0,
-            about_centre=True,
+            sx=1.12 + 0.02 * breathe,       # 压扁：贴在面上而不是站着
+            sy=0.84 - 0.02 * breathe,
+            dy=-7.0,                        # 四肢往下张，整体抬起来才不顶到画布底
+            rot=-facing * 5.0,
         )
     if state is State.DIZZY:
         return Pose(sx=1.04, sy=0.97, rot=math.sin(t * 8.0) * 7.0)
@@ -317,6 +319,10 @@ class BlobPet:
         thickness = w * 0.19
         hand_r = w * 0.115
 
+        if state is State.CLING:
+            self._draw_spread_limbs(p, t, cx, bottom, w, h, thickness, hand_r * 0.85)
+            return
+
         if posture is Posture.CROSSED:
             self._draw_crossed_arms(p, cx, shoulder_y, shoulder_x, w, h, thickness, hand_r)
             return
@@ -328,6 +334,34 @@ class BlobPet:
         thumb = state is State.HAPPY
         self._draw_arm(p, QPointF(cx - shoulder_x, shoulder_y), -1, left, length, thickness, hand_r, thumb)
         self._draw_arm(p, QPointF(cx + shoulder_x, shoulder_y), 1, right, length, thickness, hand_r, thumb)
+
+    def _draw_spread_limbs(
+        self, p: QPainter, t: float, cx: float, bottom: float,
+        w: float, h: float, thickness: float, hand_r: float,
+    ) -> None:
+        """扒住墙面的四肢：两手朝上外、两"脚"朝下外，像壁虎吸在玻璃上。
+
+        这里刻意不复用 _arm_angles 那套"绕肩膀转的角度"——那套是给站立姿势
+        设计的，只有两条肢体、而且都从身体两侧垂下。扒墙需要的是四个朝外的
+        接触点，用绝对方向角直接写更清楚。
+        """
+        sway = math.sin(t * 2.3) * 4.0
+        reach = w * 0.28
+        # (肩/胯的横向偏移, 高度比例, 伸出方向角) —— 角度 0=正右, 90=正下
+        limbs = (
+            (-0.28, 0.62, 205.0 + sway), (0.28, 0.62, -25.0 - sway),   # 手：朝上外
+            (-0.30, 0.20, 152.0 - sway), (0.30, 0.20, 28.0 + sway),    # 脚：朝下外
+        )
+        for offset, height, degrees in limbs:
+            root = QPointF(cx + offset * w, bottom - height * h)
+            angle = math.radians(degrees)
+            tip = QPointF(root.x() + math.cos(angle) * reach,
+                          root.y() + math.sin(angle) * reach)
+            p.setPen(QPen(self.BODY_MID, thickness, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(root, tip)
+            p.setPen(Qt.NoPen)
+            self._draw_hand(p, tip, hand_r,
+                            _hand_rotation(tip.x() - root.x(), tip.y() - root.y()))
 
     def _draw_crossed_arms(
         self, p: QPainter, cx: float, shoulder_y: float, shoulder_x: float,

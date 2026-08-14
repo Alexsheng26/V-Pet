@@ -150,17 +150,21 @@ class TestStates(unittest.TestCase):
             pet.render(State.IDLE, 0.5, 1, 1.0, Posture.RELAXED),
         )
 
-    def test_cling_lies_flat_against_the_wall(self):
-        """趴墙是整只转 90°，不是站着往墙上蹭 —— 后者读起来像在挥手。"""
-        for facing in (1, -1):
-            rot = pose_for(State.CLING, 0.0, facing).rot
-            self.assertAlmostEqual(abs(rot), 90.0, delta=6.0, msg=f"facing={facing}")
-            self.assertEqual(rot > 0, facing > 0, "转的方向反了，脚会朝屏幕内侧")
+    def test_cling_squashes_against_the_surface(self):
+        """扒墙靠的是"压扁 + 四肢张开"，不是转 90° 横躺。
 
-    def test_cling_spins_about_the_canvas_centre(self):
-        """绕脚底转的话，90° 会把整个身体甩出画布。"""
-        self.assertTrue(pose_for(State.CLING, 0.0, 1).about_centre)
-        self.assertFalse(pose_for(State.DIZZY, 0.0, 1).about_centre, "踉跄该以落脚点为轴")
+        横躺那版几何上没错（手确实按在墙线上），但读起来是"躺倒"。
+        正面视角的 2D 角色有个绕不开的限制：靠墙那侧的肢体会被身体挡住，
+        所以侧贴怎么画都看不到接触点。
+        """
+        pose = pose_for(State.CLING, 0.0, 1)
+        self.assertGreater(pose.sx, 1.05, "该横向摊开")
+        self.assertLess(pose.sy, 0.90, "该纵向压扁")
+        self.assertLess(abs(pose.rot), 20.0, "只是轻微倾斜，不是转 90°")
+
+    def test_cling_leans_toward_the_wall_it_is_on(self):
+        self.assertLess(pose_for(State.CLING, 0.0, 1).rot, 0)
+        self.assertGreater(pose_for(State.CLING, 0.0, -1).rot, 0)
 
 
 if __name__ == "__main__":

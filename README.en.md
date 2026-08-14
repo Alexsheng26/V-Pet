@@ -1,7 +1,7 @@
 # v-pet
 
 **A desktop pet that lives on your Windows taskbar.** Frameless, always-on-top,
-per-pixel alpha. Throw it across the screen, stick it flat against the screen edge,
+per-pixel alpha. Throw it across the screen, splay it against the screen edge,
 let it walk along the title bars of your open windows. 65 MB portable, 1.2 s cold start.
 
 [![CI](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexsheng26/V-Pet/actions/workflows/ci.yml)
@@ -40,7 +40,7 @@ For a portable build that doesn't need Python, see [Releases](https://github.com
 |---|---|
 | Drag and fling it | Falls with the velocity you threw it at, bounces on landing |
 | Throw it hard enough | Gets dizzy, stars circling overhead |
-| Drop it near a screen edge | **Lies flat against the wall**, braced with both hands, slowly sliding down |
+| Drop it near a screen edge | **Splays out against the wall like Spider-Man**, slowly sliding down |
 | Drop it above a window | Stands on the title bar. Move the window and it rides along; close it and it falls |
 | Drop it on a desktop icon | Tilts its head at it with a question mark |
 | Double-click, or rub the cursor over it | Head pat |
@@ -157,7 +157,39 @@ Two details came out of measurement:
   `None` on a full disk or a permissions error. A crash handler that crashes is worse
   than none.
 
-#### Two pets overwrite each other's config
+#### A wall cling needs contact points outside the silhouette
+
+This pose took three attempts, each failing differently, and the failures converge
+on one rule.
+
+**First: standing upright, nudged toward the wall.** Reads as waving.
+
+**Second: rotate the whole thing 90°.** The silhouette is right — a horizontal shape
+pressed against the screen edge — and the hands genuinely touch the wall line.
+Geometrically correct, but it reads as **lying down**, not clinging.
+
+**Third: front-facing, four limbs splayed to the corners.** This one works.
+
+Two more variants were tried in between (upright + tilt + raised arms, and sideways +
+splayed arms) and they failed for the same reason:
+
+> **On a front-facing 2D character, the limb on the wall side is hidden by the body.**
+
+So no "side-on" drawing can show a contact point — and without a visible contact point
+there is no reading of "clinging". Splaying the arms in the rotated version made it
+worse: the hands swing *away* from the wall, losing even the contact it had.
+
+What actually reads as clinging is **limbs spread toward four corners with contact
+points far apart**, not the body hugging a line. That pose deliberately does not reuse
+the shoulder-angle model used for standing — it needs four outward anchors, so absolute
+direction angles are simply clearer.
+
+The geometry was measured, not guessed: the limbs initially overflowed the canvas, a
+bounding-box dump showed 34 px unused at the top while left/right/bottom were flush,
+so the body moved up 7 px and the reach shrank to `0.28w`. The outermost hand ends up
+2 px from the screen edge.
+
+### Two pets overwrite each other's config
 
 Double-click the exe twice and you get two pets — **writing the same `config.json`**.
 Position, size and toggles clobber each other and whoever quits last wins. With autostart
